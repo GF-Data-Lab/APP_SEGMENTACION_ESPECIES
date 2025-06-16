@@ -1,4 +1,7 @@
 streamlit
 scikit-learn
 pandas
-
+numpy
+plotly
+scikit-learn-extra
+openpyxl
