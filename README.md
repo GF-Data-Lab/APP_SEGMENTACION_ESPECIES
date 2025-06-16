@@ -36,3 +36,6 @@ Ejecute el siguiente comando y abra la URL que se indica en el terminal:
 streamlit run app2.py
 ```
 
+Al subir un archivo XLSX, la aplicación leerá automáticamente la hoja
+**Ev. Cosecha Extenso** para aplicar la clasificación.
+

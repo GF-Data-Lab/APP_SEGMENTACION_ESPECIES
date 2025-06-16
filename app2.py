@@ -134,14 +134,20 @@ st.sidebar.header("1️⃣ Carga de datos")
 
 uploaded_file = st.sidebar.file_uploader(
     "Sube tu archivo .xlsx de evaluación de cosecha",
-    type=["xlsx"],
+    type=["xlsx", "csv"],
 )
 
+df_raw = None
 if uploaded_file:
-    sheets = pd.ExcelFile(uploaded_file).sheet_names
-    sheet = st.sidebar.selectbox("Selecciona hoja", sheets, index=0)
-    df_raw = pd.read_excel(uploaded_file, sheet_name=sheet)
-    
+    if uploaded_file.name.lower().endswith(".csv"):
+        df_raw = pd.read_csv(uploaded_file)
+    else:
+        try:
+            df_raw = pd.read_excel(uploaded_file, sheet_name="Ev. Cosecha Extenso")
+        except ValueError:
+            st.error("No se encontró la hoja 'Ev. Cosecha Extenso'.")
+
+if df_raw is not None:
     st.subheader("Datos originales")
     st.dataframe(df_raw.head())
     
