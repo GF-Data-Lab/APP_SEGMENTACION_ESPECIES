@@ -1,6 +1,6 @@
 # APP_SEGMENTACION_ESPECIES
 
-Esta aplicación de Streamlit permite clasificar especies de iris a partir de las mediciones ingresadas por el usuario.
+Esta aplicación de Streamlit permite clasificar y agrupar variedades de fruta utilizando reglas y algoritmos de clustering.
 
 ## Instalación
 
@@ -33,6 +33,6 @@ prueba estos pasos:
 Ejecute el siguiente comando y abra la URL que se indica en el terminal:
 
 ```bash
-streamlit run streamlit_app.py
+streamlit run app2.py
 ```
 
