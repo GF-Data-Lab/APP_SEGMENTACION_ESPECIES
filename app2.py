@@ -298,6 +298,82 @@ if uploaded_file:
             mime="text/csv",
         )
 
+        st.markdown("---")
+        st.subheader("Simulaciones manuales")
+
+        if "sim_results" not in st.session_state:
+            st.session_state["sim_results"] = []
+
+        specie = st.selectbox("Especie", ["Ciruela", "Nectarina", "Cereza"])
+        brix = st.number_input("Brix", 0.0, 30.0, 16.0, step=0.1)
+        acidez = st.number_input("Acidez", 0.0, 5.0, 0.8, step=0.01)
+
+        extra_inputs = {}
+        if specie == "Ciruela":
+            peso = st.number_input("Peso (g)", 0.0, 200.0, 60.0)
+            fpd = st.number_input("Firmeza PD", 0.0, 20.0, 6.0)
+            fm = st.number_input("Firmeza MJ", 0.0, 20.0, 8.0)
+            extra_inputs = {
+                "peso": peso,
+                "fpd": fpd,
+                "fm": fm,
+            }
+        elif specie == "Nectarina":
+            color_pulpa = st.selectbox("Color pulpa", ["Amarilla", "Blanca"])
+            fecha = st.date_input("Fecha cosecha", dt.date.today())
+            fpd = st.number_input("Firmeza PD", 0.0, 20.0, 6.0)
+            fm = st.number_input("Firmeza MJ", 0.0, 20.0, 8.0)
+            extra_inputs = {
+                "color_pulpa": color_pulpa,
+                "fecha": fecha,
+                "fpd": fpd,
+                "fm": fm,
+            }
+        else:  # Cereza
+            color_fruto = st.selectbox("Color fruto", ["Roja", "Bicolor"])
+            fecha = st.date_input("Fecha cosecha", dt.date.today())
+            firmeza = st.number_input("Firmeza (g)", 0.0, 500.0, 300.0)
+            extra_inputs = {
+                "color_fruto": color_fruto,
+                "fecha": fecha,
+                "firmeza": firmeza,
+            }
+
+        if st.button("Agregar simulación"):
+            row = {"especie": specie, "brix": brix, "acidez": acidez}
+            row.update(extra_inputs)
+            serie = pd.Series(row)
+            if specie == "Ciruela":
+                clas = classify_plum(serie)
+            elif specie == "Nectarina":
+                clas = classify_nectarine(serie)
+            else:
+                clas = classify_cherry(serie)
+            row["clasificacion"] = clas
+            st.session_state["sim_results"].append(row)
+
+        if st.session_state["sim_results"]:
+            sim_df = pd.DataFrame(st.session_state["sim_results"])
+            st.dataframe(sim_df)
+            import plotly.express as px
+
+            def y_value(r):
+                for c in ("fpd", "firmeza", "fm"):
+                    if c in r and pd.notna(r[c]):
+                        return r[c]
+                return None
+
+            sim_df["y"] = sim_df.apply(y_value, axis=1)
+            fig = px.scatter(
+                sim_df,
+                x="brix",
+                y="y",
+                color="especie",
+                symbol="clasificacion",
+                title="Simulaciones Brix vs Firmeza",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
     with tab2:
         st.header("Clustering algorítmico")
         numeric_cols = df_orig.select_dtypes(include=[np.number]).columns.tolist()
