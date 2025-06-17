@@ -303,6 +303,13 @@ uploaded_file = st.sidebar.file_uploader(
 if uploaded_file:
     df_orig = pd.read_excel(uploaded_file, sheet_name="Ev. Cosecha Extenso")
     df_orig, mapping = _map_columns(df_orig)
+    # Mantener solo las columnas necesarias para la clasificación
+    cols_of_interest = [
+        "especie", "variedad", "brix", "fpd", "fm",
+        "firmeza", "acidez", "peso", "color_pulpa",
+        "color_fruto", "fecha",
+    ]
+    df_orig = df_orig[[c for c in cols_of_interest if c in df_orig.columns]]
     st.sidebar.success("Archivo cargado")
 
     tab1, tab2, tab3 = st.tabs([
