@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
+import altair as alt
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans, DBSCAN
@@ -33,7 +34,13 @@ except ImportError:
 COLUMN_PATTERNS: Dict[str, List[str]] = {
     "especie": ["especie"],
     "variedad": ["variedad"],
-    "brix": ["brix", "°brix", "brx"],
+    # Brix puede venir en distintas columnas. Se prioriza la columna
+    # "Sólidos solubles (%)" y luego otras variantes.
+    "brix": [
+        "s[oó]lidos?\s*solubles",  # "Sólidos solubles (%)" u otras variantes
+        "s[oó]lido\s*soluble",     # columna adicional
+        "brix", "°brix", "brx"
+    ],
     "fpd": ["firmeza pd", "punto debil"],
     "fm": ["firmeza mj", "firmeza mej"],
     "firmeza": ["firmeza (g)", "firmeza fruit"],
@@ -161,11 +168,30 @@ def _safe_week(value) -> Optional[int]:
 
 def _map_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
     mapping: Dict[str, str] = {}
+    # Identificar posibles columnas de Brix antes de renombrar
+    rx_main = re.compile("s[oó]lidos?\s*solubles", re.IGNORECASE)
+    rx_extra = re.compile("s[oó]lido\s*soluble", re.IGNORECASE)
+    brix_main = next((c for c in df.columns if rx_main.search(str(c))), None)
+    brix_extra = next((c for c in df.columns if rx_extra.search(str(c)) and c != brix_main), None)
+
     for key in COLUMN_PATTERNS:
         col = find_column(df, key)
         if col:
             mapping[key] = col
+
+    if brix_main:
+        mapping["brix"] = brix_main
+    if brix_extra:
+        mapping["brix_extra"] = brix_extra
+
     df = df.rename(columns=mapping)
+
+    if "brix_extra" in df.columns:
+        if "brix" in df.columns:
+            df["brix"] = df["brix"].fillna(df["brix_extra"])
+        else:
+            df.rename(columns={"brix_extra": "brix"}, inplace=True)
+
     return df, mapping
 
 ###############################################################################
@@ -290,6 +316,53 @@ if uploaded_file:
         df_class = df_orig.copy()
         df_class["clasificacion"] = df_class.apply(classify_row, axis=1)
         st.dataframe(df_class.head())
+        # Análisis exploratorio simple por clasificación
+        if "clasificacion" in df_class.columns:
+            num_cols = df_class.select_dtypes(include=[np.number]).columns
+            if len(num_cols) >= 2:
+                chart = (
+                    alt.Chart(df_class)
+                    .mark_circle(size=60)
+                    .encode(
+                        x=alt.X(num_cols[0]+':Q'),
+                        y=alt.Y(num_cols[1]+':Q'),
+                        color="clasificacion:N",
+                        tooltip=list(df_class.columns)
+                    )
+                    .properties(title="Exploraci\u00f3n de datos (clasificaci\u00f3n)")
+                    .interactive()
+                )
+                st.altair_chart(chart, use_container_width=True)
+        with st.expander("Ingresar fruto manualmente"):
+            with st.form("manual_form"):
+                especie = st.text_input("Especie")
+                variedad = st.text_input("Variedad")
+                brix = st.number_input("Brix", step=0.1)
+                fpd = st.number_input("Firmeza PD (lb)", step=0.1)
+                fm = st.number_input("Firmeza MJ (lb)", step=0.1)
+                firmeza = st.number_input("Firmeza (g)", step=1.0)
+                acidez = st.number_input("Acidez %", step=0.01)
+                peso = st.number_input("Peso (g)", step=1.0)
+                color_pulpa = st.text_input("Color pulpa")
+                color_fruto = st.text_input("Color fruto")
+                fecha = st.date_input("Fecha cosecha", value=dt.date.today())
+                submit = st.form_submit_button("Clasificar")
+            if submit:
+                row = pd.Series({
+                    "especie": especie,
+                    "variedad": variedad,
+                    "brix": brix,
+                    "fpd": fpd,
+                    "fm": fm,
+                    "firmeza": firmeza,
+                    "acidez": acidez,
+                    "peso": peso,
+                    "color_pulpa": color_pulpa,
+                    "color_fruto": color_fruto,
+                    "fecha": fecha,
+                })
+                grade = classify_row(row)
+                st.success(f"Clasificación obtenida: {grade}")
         csv = df_class.to_csv(index=False).encode("utf-8")
         st.download_button(
             "Descargar clasificación",
@@ -331,6 +404,20 @@ if uploaded_file:
                     title="Clusters (PCA 2D)",
                 )
                 st.plotly_chart(fig, use_container_width=True)
+                # Exploración de datos de clusters con Altair
+                chart = (
+                    alt.Chart(df_cluster)
+                    .mark_circle(size=60)
+                    .encode(
+                        x="pca1",
+                        y="pca2",
+                        color="cluster:N",
+                        tooltip=features
+                    )
+                    .properties(title="Clusters PCA Altair")
+                    .interactive()
+                )
+                st.altair_chart(chart, use_container_width=True)
                 csvc = df_cluster.to_csv(index=False).encode("utf-8")
                 st.download_button("Descargar clusters", csvc, "clusters.csv", mime="text/csv")
             except Exception as e:
@@ -341,10 +428,18 @@ if uploaded_file:
         especie_col = "especie" if "especie" in df_orig.columns else df_orig.columns[0]
         stats = df_orig.groupby(especie_col).describe()
         st.dataframe(stats)
-        import plotly.express as px
         num_cols = df_orig.select_dtypes(include=[np.number]).columns
         for col in num_cols:
-            fig = px.box(df_orig, x=especie_col, y=col, title=f"Distribución de {col}")
-            st.plotly_chart(fig, use_container_width=True)
+            chart = (
+                alt.Chart(df_orig)
+                .mark_boxplot()
+                .encode(
+                    x=alt.X(f"{especie_col}:N", title="Especie"),
+                    y=alt.Y(f"{col}:Q", title=col),
+                    color=f"{especie_col}:N",
+                )
+                .properties(title=f"Distribución de {col}")
+            )
+            st.altair_chart(chart, use_container_width=True)
 else:
     st.info("Sube un archivo para comenzar")
