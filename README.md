@@ -39,3 +39,8 @@ streamlit run app2.py
 Al subir un archivo XLSX, la aplicación leerá automáticamente la hoja
 **Ev. Cosecha Extenso** para aplicar la clasificación.
 
+
+## Simulaciones manuales
+
+La pestaña **Clasificación manual** permite ingresar parámetros de Brix, acidez y otras variables por especie para simular casos individuales. Cada simulación se almacena en la sesión y se muestra en una tabla junto con su categoría asignada. Además, se genera un scatter plot de Brix versus firmeza para visualizar el comportamiento de las distintas especies en las pruebas manuales.
+
