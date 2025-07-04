@@ -34,6 +34,7 @@ import io
 # --------------------------------------------------
 # Configuración general
 # --------------------------------------------------
+
 FILE = Path(r"MAESTRO CAROZOS FINAL COMPLETO CG.xlsx")
 SHEET_NAME = "CAROZOS"
 USECOLS = "A:AP"
@@ -247,51 +248,46 @@ def process_carozos(file: Union[str, Path] = FILE) -> pd.DataFrame:
         skiprows=START_ROW, dtype=str
     )
 
-    # ------------ filtros & renombres -------------------------------------
+    # 1) Filtros y renombres
     df = df[df[ESPECIE_COLUMN].isin(ESPECIES_VALIDAS)].copy()
     df.rename(columns={COL_ORIG_BRIX: COL_BRIX}, inplace=True)
     if COLOR_COLUMN not in df.columns:
         df[COLOR_COLUMN] = "Amarilla"
 
-    # ------------ tipos y periodos ----------------------------------------
+    # 2) Tipos y periodos
     df[DATE_COLUMN] = pd.to_datetime(df[DATE_COLUMN], errors="coerce")
     df["harvest_period"] = df[DATE_COLUMN].apply(_harvest_period)
-    df["plum_subtype"] = df.apply(_plum_subtype, axis=1)
+    df["plum_subtype"]   = df.apply(_plum_subtype, axis=1)
 
-    # ------------ numéricos ------------------------------------------------
+    # 3) Conversión a numérico
     _to_numeric(df, NUMERIC_COLS)
 
-    # ------------ agrupación Variedad + Fruto -----------------------------
-    grp_keys = [VAR_COLUMN, FRUTO_COLUMN]
-    grp_fpd = (
-        df.groupby(grp_keys, dropna=False)
-          .apply(_fpd_from_group)
-          .rename("Firmeza punto débil")
-          .reset_index()
-    )
-    df = df.merge(grp_fpd, on=grp_keys, how="left")
+    # 4) Cálculo de Firmeza punto débil (mínimo absoluto)
+    df["Firmeza punto débil"] = df[COL_FIRMEZA_ALL].min(axis=1)
 
-    # Relleno de nulos por primera muestra
+    # 5) Relleno de nulos por primera muestra
+    grp_keys = [VAR_COLUMN, FRUTO_COLUMN]
     df = (
         df.groupby(grp_keys, dropna=False, group_keys=False)
-          .apply(_first_sample_fill, NUMERIC_COLS + ["Firmeza punto débil"])  
+          .apply(_first_sample_fill, NUMERIC_COLS + ["Firmeza punto débil"] )
     )
 
-    # ------------ clasificación -------------------------------------------
-    cols_to_classify = ["Firmeza punto débil"] + [COL_BRIX, COL_ACIDEZ]
+    # 6) Clasificación de grupos
+    cols_to_classify = ["Firmeza punto débil", COL_BRIX, COL_ACIDEZ]
     for col in cols_to_classify:
         out = f"grp_{col.replace(' ', '_')}"
         df[out] = df.apply(lambda r, c=col: _classify_row(r, c), axis=1)
 
-    # ------------ cluster individual --------------------------------------
+    # 7) Cluster individual
     grp_cols = [c for c in df.columns if c.startswith("grp_")]
     df["cond_sum"] = df[grp_cols].sum(axis=1, min_count=1)
     if df["cond_sum"].notna().nunique() >= 4:
-        df["cluster_row"] = pd.qcut(df["cond_sum"], 4, labels=[1, 2, 3, 4])
+        df["cluster_row"] = pd.qcut(df["cond_sum"], 4, labels=[1,2,3,4])
     else:
-        df["cluster_row"] = pd.cut(df["cond_sum"], 4, labels=[1, 2, 3, 4])
+        df["cluster_row"] = pd.cut(df["cond_sum"], 4, labels=[1,2,3,4])
 
-    # ------------ cluster grupal (promedio) -------------------------------
+    # 8) Cluster grupal (promedio)
+    # Reusar grp_keys definidos antes
     grp_cond = (
         df.groupby(grp_keys, dropna=False)["cond_sum"]
           .mean()
@@ -299,14 +295,14 @@ def process_carozos(file: Union[str, Path] = FILE) -> pd.DataFrame:
           .reset_index()
     )
     df = df.merge(grp_cond, on=grp_keys, how="left")
-
     if grp_cond["cond_sum_grp"].notna().nunique() >= 4:
-        bins = pd.qcut(grp_cond["cond_sum_grp"], 4, labels=[1, 2, 3, 4])
+        bins = pd.qcut(grp_cond["cond_sum_grp"], 4, labels=[1,2,3,4])
     else:
-        bins = pd.cut(grp_cond["cond_sum_grp"], 4, labels=[1, 2, 3, 4])
+        bins = pd.cut(grp_cond["cond_sum_grp"], 4, labels=[1,2,3,4])
     grp_cond["cluster_grp"] = bins
-
-    df = df.merge(grp_cond[grp_keys + ["cluster_grp"]], on=grp_keys, how="left")
+    df = df.merge(
+        grp_cond[grp_keys + ["cluster_grp"]], on=grp_keys, how="left"
+    )
 
     return df
 
@@ -314,15 +310,24 @@ def process_carozos(file: Union[str, Path] = FILE) -> pd.DataFrame:
 
 @st.cache_data
 def process_file(uploaded_file) -> Union[pd.DataFrame, None]:
-    """Carga y procesa el archivo subido con la lógica de carozos."""
     try:
         return process_carozos(uploaded_file)
     except Exception as e:
         st.error(f"Error al procesar el archivo: {e}")
         return None
 
-st.set_page_config(page_title="Procesador de Carozos CG", layout="wide")
-st.title("🛠️ Procesador de Carozos CG")
+st.set_page_config(
+    page_title='Segmentación por Especies',
+    layout='wide',
+    page_icon='garces_data_analytics.png'
+)
+
+st.sidebar.image(
+    'garces_data_analytics.png',
+    width=250
+)
+
+st.title("🛠️ Segmentación por Especies")
 st.write(
     "Sube tu archivo Excel 'MAESTRO CAROZOS FINAL COMPLETO CG.xlsx' y obtén los clusters, clasificaciones y resultados procesados según el flujograma."
 )
@@ -338,13 +343,13 @@ if uploaded:
     if df is not None:
         st.success("¡Procesamiento completado con éxito! 🎉")
         st.dataframe(df, use_container_width=True)
-        towrite = io.BytesIO()
-        with pd.ExcelWriter(towrite, engine='xlsxwriter') as writer:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False, sheet_name='Carozos')
-        towrite.seek(0)
+        buf.seek(0)
         st.download_button(
             label="📥 Descargar resultados como Excel",
-            data=towrite.getvalue(),
+            data=buf.getvalue(),
             file_name="carozos_procesados.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
