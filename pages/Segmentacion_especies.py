@@ -2,24 +2,24 @@
 """
 Procesamiento de la hoja «Carozos» del archivo Excel "MAESTRO CAROZOS FINAL COMPLETO CG.xlsx".
 
-Versión 7 – 25‑jun‑2025
+Versión 7 – 25-jun-2025
 --------------------------------------------------
 Novedades claves
 ----------------
-1. **Dos sub‑tipos de cherry plum** («small» ≤ 45 g y «mid» 46‑60 g) con reglas
+1. **Dos sub-tipos de cherry plum** («small» ≤ 45 g y «mid» 46-60 g) con reglas
    independientes y fácilmente editables.
 2. **Nuevos umbrales Candy / Cherry** (Brix, Firmeza, Acidez, Productividad)
    exactamente como en el flujograma.
-3. **Color de pulpa** («Amarilla» ∣ «Blanca») para nectarines
-   + reglas específicas por periodo de cosecha (muy temprana, temprana, tardía).
+3. **Color de pulpa** («Amarilla» ∣ «Blanca») para nectarines
+   + reglas específicas por periodo de cosecha (muy temprana, temprana, tardía).
 4. **Firmeza punto débil**  
-   = *valor mínimo más frecuente* entre Quilla, Hombro, Mejilla 1 y 2,
-   calculado en el **promedio del grupo Variedad + Fruto**.
+   = *valor mínimo más frecuente* entre Quilla, Hombro, Mejilla 1 y 2,
+   calculado en el **promedio del grupo Variedad + Fruto**.
 5. **Relleno de nulos**: si una muestra carece de X, se toma el valor de la
-   **muestra 1** del mismo grupo.
+   **muestra 1** del mismo grupo.
 6. **Clúster doble**  
    - `cluster_row`  → cada registro individual  
-   - `cluster_grp`  → promedio del grupo Variedad + Fruto
+   - `cluster_grp`  → promedio del grupo Variedad + Fruto
 """
 
 from __future__ import annotations
@@ -28,12 +28,37 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Tuple, Union, Sequence
+from collections.abc import Iterable
 import streamlit as st
 import io
+from utils import show_logo
 
+
+
+st.set_page_config(
+    page_title="Segmentaciones",
+    page_icon="G.png",
+    layout="wide"
+)
 # --------------------------------------------------
 # Configuración general
 # --------------------------------------------------
+st.markdown(
+    """
+    <style>
+      /* Sólo los botones dentro del sidebar */
+      [data-testid="stSidebar"] div.stButton > button {
+        background-color: #D32F2F !important;  /* rojo fuerte */
+        color: white !important;
+        border: none !important;
+      }
+      [data-testid="stSidebar"] div.stButton > button:hover {
+        background-color: #B71C1C !important;  /* rojo más oscuro al pasar */
+      }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 FILE = Path(r"MAESTRO CAROZOS FINAL COMPLETO CG.xlsx")
 SHEET_NAME = "CAROZOS"
@@ -68,9 +93,9 @@ NUMERIC_COLS = (
 )
 
 # ---------------------------------------------------------------------------
-# Tabla de reglas ― Ciruela --------------------------------------------------
-#   Cada lista: [(mín, máx, grupo), …]
-#   Límite inf. incluido, sup. excluido  → [mín, máx)
+# Tabla de reglas ― Ciruela --------------------------------------------------
+#   Cada lista: [(mín, máx, grupo), …]
+#   Límite inf. incluido, sup. excluido  → [mín, máx)
 # ---------------------------------------------------------------------------
 PLUM_RULES: Dict[str, Dict[str, List[Tuple[float, float, int]]]] = {
     "candy": {
@@ -86,15 +111,9 @@ PLUM_RULES: Dict[str, Dict[str, List[Tuple[float, float, int]]]] = {
         COL_ACIDEZ:    [(-np.inf, 0.60, 1), (0.60, 0.81, 2), (0.81, 1.00, 3), (1.00, np.inf, 4)],
     },
 }
-    # CHERRY PLUM small (≤ 45 g)  – por ahora mismo set que ‘mid’; cámbialo si
-    #   el comité técnico define otros valores
-    #"cherry_small": {},   # se hereda dinámicamente más abajo
-
-# hereda reglas mid si no se redefine
-#PLUM_RULES["cherry_small"] = PLUM_RULES["cherry_mid"].copy()
 
 # ---------------------------------------------------------------------------
-# Tabla de reglas ― Nectarin ------------------------------------------------
+# Tabla de reglas ― Nectarin ------------------------------------------------
 #   Se desdobla por color de pulpa y periodo de cosecha
 # ---------------------------------------------------------------------------
 def _mk_nec_rules(
@@ -161,16 +180,19 @@ def _to_numeric(df: pd.DataFrame, cols: Sequence[str]) -> None:
         )
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
-
-
 def _first_sample_fill(group: pd.DataFrame, cols: Sequence[str]) -> pd.DataFrame:
     """Rellena NaNs del grupo con el valor de la primera muestra."""
     first = group.iloc[0]
+    flat_cols: list[str] = []
     for c in cols:
-        if c in group:
-            group[c] = group[c].fillna(first[c])
+        if isinstance(c, Iterable) and not isinstance(c, (str, bytes)):
+            flat_cols.extend(c)
+        else:
+            flat_cols.append(c)
+    for col in flat_cols:
+        if col in group.columns:
+            group[col] = group[col].fillna(first[col])
     return group
-
 
 def _weight_value(row: pd.Series) -> float | None:
     for c in WEIGHT_COLS:
@@ -215,7 +237,6 @@ def _rule_key(col: str) -> str:
         return "FIRMEZA_MEJ"
     return col
 
-
 def _classify_value(val: float, rules: List[Tuple[float, float, int]]) -> float:
     if pd.isna(val) or not rules:
         return np.nan
@@ -223,7 +244,6 @@ def _classify_value(val: float, rules: List[Tuple[float, float, int]]) -> float:
         if lo <= val < hi:
             return grp
     return np.nan
-
 
 def _classify_row(row: pd.Series, col: str) -> float:
     key = _rule_key(col)
@@ -262,6 +282,57 @@ def process_carozos(file: Union[str, Path] = FILE) -> pd.DataFrame:
     # 3) Conversión a numérico
     _to_numeric(df, NUMERIC_COLS)
 
+    # 3.1) Columna con la mejilla más débil
+    df["firmezas mejillas"] = df[["Mejilla 1", "Mejilla 2"]].min(axis=1)
+
+    # 3.2) Clasificación de mejillas para cherry, candy y nectarines blancos
+    # 3.2) Clasificación de mejillas para cherry, candy, nectarines blancos y amarillos
+    conds = [
+        # cherry plum
+        (df["plum_subtype"] == "cherry") & (df["firmezas mejillas"] >= 6),
+        (df["plum_subtype"] == "cherry") & (df["firmezas mejillas"] >= 5) & (df["firmezas mejillas"] < 6),
+        (df["plum_subtype"] == "cherry") & (df["firmezas mejillas"] >= 4) & (df["firmezas mejillas"] < 5),
+        (df["plum_subtype"] == "cherry") & (df["firmezas mejillas"] < 4),
+
+        # candy plum
+        (df["plum_subtype"] == "candy")  & (df["firmezas mejillas"] >= 9),
+        (df["plum_subtype"] == "candy")  & (df["firmezas mejillas"] >= 7) & (df["firmezas mejillas"] < 9),
+        (df["plum_subtype"] == "candy")  & (df["firmezas mejillas"] >= 6) & (df["firmezas mejillas"] < 7),
+        (df["plum_subtype"] == "candy")  & (df["firmezas mejillas"] < 6),
+
+        # nectarin de pulpa blanca
+        (df[ESPECIE_COLUMN] == "Nectarin")
+          & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("blanc"))
+          & (df["firmezas mejillas"] >= 13),
+        (df[ESPECIE_COLUMN] == "Nectarin")
+          & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("blanc"))
+          & (df["firmezas mejillas"] >= 11) & (df["firmezas mejillas"] < 13),
+        (df[ESPECIE_COLUMN] == "Nectarin")
+          & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("blanc"))
+          & (df["firmezas mejillas"] >=  9) & (df["firmezas mejillas"] < 11),
+        (df[ESPECIE_COLUMN] == "Nectarin")
+          & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("blanc"))
+          & (df["firmezas mejillas"] <  9),
+
+        # nectarin de pulpa amarilla
+        (df[ESPECIE_COLUMN] == "Nectarin")
+          & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("amarilla"))
+          & (df["firmezas mejillas"] >= 14),
+        (df[ESPECIE_COLUMN] == "Nectarin")
+          & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("amarilla"))
+          & (df["firmezas mejillas"] >= 12) & (df["firmezas mejillas"] < 14),
+        (df[ESPECIE_COLUMN] == "Nectarin")
+          & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("amarilla"))
+          & (df["firmezas mejillas"] >=  9) & (df["firmezas mejillas"] < 12),
+        (df[ESPECIE_COLUMN] == "Nectarin")
+          & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("amarilla"))
+          & (df["firmezas mejillas"] <  9),
+    ]
+    choices = [1, 2, 3, 4] * 4  # un bloque [1,2,3,4] para cada uno de los 4 sub-tipo
+    df["grp_firmezas_mejillas"] = np.select(conds, choices, default=np.nan)
+
+
+
     # 4) Cálculo de Firmeza punto débil (mínimo absoluto)
     df["Firmeza punto débil"] = df[COL_FIRMEZA_ALL].min(axis=1)
 
@@ -269,7 +340,10 @@ def process_carozos(file: Union[str, Path] = FILE) -> pd.DataFrame:
     grp_keys = [VAR_COLUMN, FRUTO_COLUMN]
     df = (
         df.groupby(grp_keys, dropna=False, group_keys=False)
-          .apply(_first_sample_fill, NUMERIC_COLS + ["Firmeza punto débil"] )
+          .apply(
+              _first_sample_fill,
+              NUMERIC_COLS + ["Firmeza punto débil", "firmezas mejillas", "grp_firmezas_mejillas"]
+          )
     )
 
     # 6) Clasificación de grupos
@@ -287,7 +361,6 @@ def process_carozos(file: Union[str, Path] = FILE) -> pd.DataFrame:
         df["cluster_row"] = pd.cut(df["cond_sum"], 4, labels=[1,2,3,4])
 
     # 8) Cluster grupal (promedio)
-    # Reusar grp_keys definidos antes
     grp_cond = (
         df.groupby(grp_keys, dropna=False)["cond_sum"]
           .mean()
@@ -316,16 +389,18 @@ def process_file(uploaded_file) -> Union[pd.DataFrame, None]:
         st.error(f"Error al procesar el archivo: {e}")
         return None
 
-st.set_page_config(
-    page_title='Segmentación por Especies',
-    layout='wide',
-    page_icon='garces_data_analytics.png'
-)
-
-st.sidebar.image(
-    'garces_data_analytics.png',
-    width=250
-)
+def generarMenu():
+    with st.sidebar:
+        show_logo()
+        if st.button('Página de Inicio 🏚️'):
+            st.switch_page('app.py')
+        if st.button('Segmentación de especies 🍑'):
+            st.switch_page('pages/Segmentacion_especies.py')
+        if st.button('Modelo de Clasificación'):
+            st.switch_page('pages/Cluster_especies.py')
+        if st.button('Análisis exploratorio'):
+            st.switch_page('pages/analisis.py')
+generarMenu()
 
 st.title("🛠️ Segmentación por Especies")
 st.write(
@@ -342,16 +417,22 @@ if uploaded:
     df = process_file(uploaded)
     if df is not None:
         st.success("¡Procesamiento completado con éxito! 🎉")
-        st.dataframe(df, use_container_width=True)
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='Carozos')
-        buf.seek(0)
-        st.download_button(
-            label="📥 Descargar resultados como Excel",
-            data=buf.getvalue(),
-            file_name="carozos_procesados.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.data_editor(
+        df,
+        use_container_width=True,  # ocupa todo el ancho posible
+        height=600                  # ajusta la altura a tu gusto
+    )
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Carozos')
+    buf.seek(0)
+    st.download_button(
+        label="📥 Descargar resultados como Excel",
+        data=buf.getvalue(),
+        file_name="carozos_procesados.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    st.session_state["df_seg_especies"] = df
 else:
     st.info("Esperando que subas un archivo para procesar...")

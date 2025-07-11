@@ -1,0 +1,9 @@
+[theme]
+backgroundColor = "#FFF5F6"          # Fondo general (un rosa muy suave)
+secondaryBackgroundColor = "#FFE0E2" # Fondos de paneles y formularios
+primaryColor = "#D32F2F"             # Color de acentos (botones, enlaces…)
+textColor = "#212121"                # Color principal del texto
+font = "sans serif"
+
+[client]
+showSidebarNavigation = false
