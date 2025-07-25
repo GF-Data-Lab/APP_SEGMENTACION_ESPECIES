@@ -51,18 +51,70 @@ if "df_seg_especies" not in st.session_state:
 df = st.session_state["df_seg_especies"].copy()
 numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
 
-# —————— Pestañas ——————
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+
+
+# —————— Definir rangos y etiquetas ——————
+# grp_cod_sum entre 1–4 ➔ Top 1; 5–8 ➔ Top 2; 9–12 ➔ Top 3; 13–16 ➔ Top 4
+bins  = [0, 4,  8,   12,  16]                  # límites (0 para incluir 1)
+labels = ["Top 1", "Top 2", "Top 3", "Top 4"]   # etiquetas
+
+df["rankid"] = pd.cut(
+    df["cond_sum_grp"],
+    bins=bins,
+    labels=labels,
+    include_lowest=True
+)
+
+# Ahora sí son 7 pestañas
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📊 Descriptivas",
     "🔗 Correlaciones",
     "📦 Boxplots",
     "📐 PCA",
     "🔬 Clustering",
-    "📥 Exportar"
+    "📥 Exportar",
+    "🌱 Subtipos"       # <- ¡Este es el séptimo!
 ])
 
 # --- 1. Estadísticas descriptivas + por especie ---
 with tab1:
+    st.subheader("🔍 Vista detalle de cada grupo")
+
+    # 1) Define las opciones de filtro
+    opciones_rank = ["Top 1", "Top 2", "Top 3", "Top 4"]
+    seleccion = st.multiselect(
+        "Selecciona qué Top(s) mostrar:",
+        options=opciones_rank,
+        default=opciones_rank
+    )
+
+    # 2) Filtra el DataFrame según la selección
+    df_filtrado = df[df["rankid"].isin(seleccion)]
+
+    # 3) Columnas a mostrar
+    columnas_detalle = [
+        "Especie", "Variedad", "Quilla", "Hombro", "Mejilla 1", "Mejilla 2",
+        "BRIX", "Acidez (%)", "Punta", "Peso (g)",
+        "cond_sum_grp", "rankid"
+    ]
+
+    # 4) Divide el layout en 2 columnas
+    col1, col2 = st.columns(2)
+
+    # 5) En la primera columna, solo Ciruela
+    with col1:
+        st.markdown("**Ciruela**")
+        df_ciru = df_filtrado[df_filtrado["Especie"] == "Ciruela"]
+        st.dataframe(df_ciru[columnas_detalle], use_container_width=True)
+
+    # 6) En la segunda columna, solo Nectarina
+    with col2:
+        st.markdown("**Nectarina**")
+        df_nec = df_filtrado[df_filtrado["Especie"] == "Nectarin"]
+        st.dataframe(df_nec[columnas_detalle], use_container_width=True)
+
+    # 5) Renderiza la tabla filtrada con esas columnas
+    st.dataframe(df_filtrado[columnas_detalle])
     st.subheader("1. Estadísticas Descriptivas")
     st.dataframe(df.describe(include="all").T, use_container_width=True)
 
@@ -216,3 +268,44 @@ with tab6:
         file_name="carozos_analisis_por_especie.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+# ——— Contenido del tab7: Subtipos ———
+with tab7:
+    st.title("🌱 Análisis por Subtipos de Especie")
+
+    # ——— Ciruela: plum_subtype ———
+    st.markdown("#### 2.a. Estadísticas Numéricas en Ciruela por Subtipo")
+    df_ciru = df[df["Especie"] == "Ciruela"]
+    st.dataframe(
+        df_ciru.groupby("plum_subtype")[numeric_cols]
+              .describe()
+              .T,
+        use_container_width=True
+    )
+
+    st.markdown("#### 2.b. Boxplots en Ciruela por Subtipo")
+    for col in numeric_cols:
+        fig = px.box(
+            df_ciru, x="plum_subtype", y=col, points="outliers",
+            title=f"{col} por Subtipo en Ciruela"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+
+    # ——— Nectarina: Color de pulpa ———
+    st.markdown("#### 2.c. Estadísticas Numéricas en Nectarina por Color de Pulpa")
+    df_nec = df[df["Especie"] == "Nectarin"]
+    st.dataframe(
+        df_nec.groupby("Color de pulpa")[numeric_cols]
+              .describe()
+              .T,
+        use_container_width=True
+    )
+
+    st.markdown("#### 2.d. Boxplots en Nectarina por Color de Pulpa")
+    for col in numeric_cols:
+        fig = px.box(
+            df_nec, x="Color de pulpa", y=col, points="outliers",
+            title=f"{col} por Color de Pulpa en Nectarina"
+        )
+        st.plotly_chart(fig, use_container_width=True)
