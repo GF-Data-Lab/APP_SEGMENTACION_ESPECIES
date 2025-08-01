@@ -39,7 +39,7 @@ def generarMenu():
         if st.button('Página de Inicio 🏚️'):      st.switch_page('app.py')
         if st.button('Segmentación de especies 🍑'): st.switch_page('pages/Segmentacion_especies.py')
         if st.button('Modelo de Clasificación'): st.switch_page('pages/Cluster_especies.py')
-        if st.button('Análisis exploratorio'):   st.switch_page('pages/04_Analisis.py')
+        if st.button('Análisis exploratorio'):   st.switch_page('pages/analisis.py')
 generarMenu()
 
 st.title("🔍 Análisis Exploratorio y Clustering de Carozos")
