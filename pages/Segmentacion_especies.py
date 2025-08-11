@@ -66,7 +66,7 @@ USECOLS = "A:AP"
 START_ROW = 2               # saltar filas informativas
 
 ESPECIE_COLUMN = "Especie"
-DATE_COLUMN = "Fecha cosecha"
+DATE_COLUMN = "Fecha evaluación"
 COLOR_COLUMN = "Color de pulpa"           # solo existe en Nectarín
 VAR_COLUMN   = "Variedad"                 # llave para agrupaciones
 FRUTO_COLUMN = "Fruto (n°)"
@@ -146,25 +146,39 @@ PERIOD_MAP = {
     "temprana": "temprana",
     "media": "temprana",
     "tardia": "tardia",
-    "sin_fecha": "temprana",
+    "sin_fecha": "tardia ", ## revisar valor por defecto 
 }
 
 # --------------------------------------------------
 # Helpers fecha
 # --------------------------------------------------
-def _harvest_period(ts: pd.Timestamp | float | str) -> str:
+def _harvest_period_a(ts: pd.Timestamp | float | str) -> str:
     ts = pd.to_datetime(ts, errors="coerce")
     if pd.isna(ts):
         return "sin_fecha"
-    m, d = ts.month, ts.day
+    m, d = ts.month, ts.day  # valor por defcto que debe ser por pantalla
+    if (m, d) < (11, 22):
+        return "muy_temprana"
+    if (11, 22) <= (m, d) <= (12, 22):
+        return "temprana"
+    if (12, 23) <= (m, d) <= (2, 15):
+        return("tardia")
+    return "tardia"
+# --------------------------------------------------
+# Helpers fecha
+# --------------------------------------------------
+def _harvest_period_b(ts: pd.Timestamp | float | str) -> str:
+    ts = pd.to_datetime(ts, errors="coerce")
+    if pd.isna(ts):
+        return "sin_fecha"
+    m, d = ts.month, ts.day  # valor por defcto que debe ser por pantalla
     if (m, d) < (11, 25):
         return "muy_temprana"
     if (11, 25) <= (m, d) <= (12, 15):
         return "temprana"
     if (12, 16) <= (m, d) <= (2, 15):
-        return("media")
+        return("tardia")
     return "tardia"
-
 # --------------------------------------------------
 # Conversions & fills
 # --------------------------------------------------
@@ -211,7 +225,7 @@ def _plum_subtype(row: pd.Series) -> str:
         return "non_plum"
     peso = _weight_value(row)
     if peso is None:
-        return "unknown"
+        return "unknown"  # dejar un valor por pantalla de default para que lo puede cmabiar con lista desplegable
     if peso > 60:
         return "candy"
     # cualquier Ciruela ≤ 60 g es cherry
@@ -272,12 +286,18 @@ def process_carozos(file: Union[str, Path] = FILE) -> pd.DataFrame:
     df = df[df[ESPECIE_COLUMN].isin(ESPECIES_VALIDAS)].copy()
     df.rename(columns={COL_ORIG_BRIX: COL_BRIX}, inplace=True)
     if COLOR_COLUMN not in df.columns:
-        df[COLOR_COLUMN] = "Amarilla"
+        df[COLOR_COLUMN] = "Amarilla"    # Valor por defecto ver si se pued eponer por pantalla
 
     # 2) Tipos y periodos
     df[DATE_COLUMN] = pd.to_datetime(df[DATE_COLUMN], errors="coerce")
-    df["harvest_period"] = df[DATE_COLUMN].apply(_harvest_period)
-    df["plum_subtype"]   = df.apply(_plum_subtype, axis=1)
+    if df[ESPECIE_COLUMN] == 'Nectarin':
+        
+        if df[COLOR_COLUMN] == 'Amarilla':
+            df["harvest_period"] = df[DATE_COLUMN].apply(_harvest_period_a)
+        else:
+            df["harvest_period"] = df[DATE_COLUMN].apply(_harvest_period_b)
+    else:    
+        df["plum_subtype"]   = df.apply(_plum_subtype, axis=1)
 
     # 3) Conversión a numérico
     _to_numeric(df, NUMERIC_COLS)
