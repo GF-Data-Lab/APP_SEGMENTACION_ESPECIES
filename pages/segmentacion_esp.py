@@ -72,7 +72,7 @@ def segmentacion_app():
     ESPECIES_VALIDAS = {"Ciruela", "Nectarin"}
 
     WEIGHT_COLS = ("Peso (g)", "Calibre", "Peso")
-    COL_FIRMEZA_PUNTO = ("Quilla", "Hombro")
+    COL_FIRMEZA_PUNTO = ("Quilla", "Hombro", "Punta")
     COL_FIRMEZA_MEJILLAS = ("Mejilla 1", "Mejilla 2")
     COL_FIRMEZA_ALL = list(COL_FIRMEZA_PUNTO + COL_FIRMEZA_MEJILLAS)
 
@@ -289,6 +289,11 @@ def segmentacion_app():
             return "FIRMEZA_PUNTO"
         if col in COL_FIRMEZA_MEJILLAS:
             return "FIRMEZA_MEJ"
+        # Si la columna corresponde al valor de firmeza punto o promedio de mejillas
+        if col == "Firmeza punto valor":
+            return "FIRMEZA_PUNTO"
+        if col == "avg_mejillas":
+            return "FIRMEZA_MEJ"
         return col
 
     def _classify_value(val: float, rules: List[Tuple[float, float, int]]) -> float:
@@ -345,6 +350,8 @@ def segmentacion_app():
         rules_nect: Dict,
         cond_method: str = "suma",
         grp_method: str = "mean",
+        fpd_vars: Sequence[str] | None = None,
+        mejillas_method: str = "media",
     ) -> pd.DataFrame:
         # Permitir que el parámetro file sea un DataFrame ya cargado
         if isinstance(file, pd.DataFrame):
@@ -378,63 +385,57 @@ def segmentacion_app():
                 df.at[i, "harvest_period"] = _harvest_period_a(df.at[i, DATE_COLUMN])
         # 3) Conversión a numérico
         _to_numeric(df, NUMERIC_COLS)
-        # 3.1) Columna con la mejilla más débil
-        df["firmezas mejillas"] = df[["Mejilla 1", "Mejilla 2"]].min(axis=1)
-        # 3.2) Clasificación de mejillas rápida (igual que original)
-        conds = [
-            (df["plum_subtype"] == "cherry") & (df["firmezas mejillas"] >= 6),
-            (df["plum_subtype"] == "cherry") & (df["firmezas mejillas"] >= 5) & (df["firmezas mejillas"] < 6),
-            (df["plum_subtype"] == "cherry") & (df["firmezas mejillas"] >= 4) & (df["firmezas mejillas"] < 5),
-            (df["plum_subtype"] == "cherry") & (df["firmezas mejillas"] < 4),
-            (df["plum_subtype"] == "candy")  & (df["firmezas mejillas"] >= 9),
-            (df["plum_subtype"] == "candy")  & (df["firmezas mejillas"] >= 7) & (df["firmezas mejillas"] < 9),
-            (df["plum_subtype"] == "candy")  & (df["firmezas mejillas"] >= 6) & (df["firmezas mejillas"] < 7),
-            (df["plum_subtype"] == "candy")  & (df["firmezas mejillas"] < 6),
-            # Nectarin blanca
-            (df[ESPECIE_COLUMN] == "Nectarin")
-              & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("blanc"))
-              & (df["firmezas mejillas"] >= 13),
-            (df[ESPECIE_COLUMN] == "Nectarin")
-              & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("blanc"))
-              & (df["firmezas mejillas"] >= 11) & (df["firmezas mejillas"] < 13),
-            (df[ESPECIE_COLUMN] == "Nectarin")
-              & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("blanc"))
-              & (df["firmezas mejillas"] >=  9) & (df["firmezas mejillas"] < 11),
-            (df[ESPECIE_COLUMN] == "Nectarin")
-              & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("blanc"))
-              & (df["firmezas mejillas"] <  9),
-            # Nectarin amarilla
-            (df[ESPECIE_COLUMN] == "Nectarin")
-              & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("amarilla"))
-              & (df["firmezas mejillas"] >= 14),
-            (df[ESPECIE_COLUMN] == "Nectarin")
-              & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("amarilla"))
-              & (df["firmezas mejillas"] >= 12) & (df["firmezas mejillas"] < 14),
-            (df[ESPECIE_COLUMN] == "Nectarin")
-              & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("amarilla"))
-              & (df["firmezas mejillas"] >=  9) & (df["firmezas mejillas"] < 12),
-            (df[ESPECIE_COLUMN] == "Nectarin")
-              & (df[COLOR_COLUMN].str.strip().str.lower().str.startswith("amarilla"))
-              & (df["firmezas mejillas"] <  9),
-        ]
-        choices = [1, 2, 3, 4] * 4
-        df["grp_firmezas_mejillas"] = np.select(conds, choices, default=np.nan)
-        # 4) Firmeza punto débil (mínimo absoluto)
-        df["Firmeza punto débil"] = df[COL_FIRMEZA_ALL].min(axis=1)
+        # 3.1) Cálculo de la medida de mejillas: promedio de Mejilla 1 y 2 por fruto
+        grp_keys_fp = [VAR_COLUMN, FRUTO_COLUMN]
+        # Media de cada mejilla por fruto y luego promedio de ambas
+        mej_means = df.groupby(grp_keys_fp)[list(COL_FIRMEZA_MEJILLAS)].transform('mean')
+        df["avg_mejillas"] = mej_means.mean(axis=1)
+        # Aplicar método de agregación seleccionado (media o moda) para promediar entre réplicas
+        if mejillas_method == "moda":
+            # Para cada fruto calculamos la moda de avg_mejillas
+            def _mode_series(s):
+                m = s.mode()
+                return m.iloc[0] if not m.empty else s.iloc[0]
+            df["avg_mejillas"] = df.groupby(grp_keys_fp)["avg_mejillas"].transform(_mode_series)
+        else:
+            # Media por fruto (ya calculada) se recalcula por claridad
+            df["avg_mejillas"] = df.groupby(grp_keys_fp)["avg_mejillas"].transform('mean')
+        # 3.2) Cálculo de la firmeza punto débil según variables seleccionadas
+        # Si el usuario no pasa una lista de variables utilizamos todas las disponibles
+        if fpd_vars:
+            # Calcular el promedio por fruto de cada variable seleccionada
+            fpd_means = df.groupby(grp_keys_fp)[list(fpd_vars)].transform('mean')
+            # Valor de firmeza punto débil: mínimo de los promedios
+            df["Firmeza punto valor"] = fpd_means.min(axis=1)
+            # Registrar la columna que dio el mínimo
+            df["Firmeza punto columna"] = fpd_means.idxmin(axis=1)
+        else:
+            # Usar todas las variables físicas si no se especifican
+            fpd_means = df.groupby(grp_keys_fp)[list(COL_FIRMEZA_ALL)].transform('mean')
+            df["Firmeza punto valor"] = fpd_means.min(axis=1)
+            df["Firmeza punto columna"] = fpd_means.idxmin(axis=1)
+        # 3.3) Relleno de nulos por primera muestra
         # 5) Relleno de nulos por primera muestra
         grp_keys = [VAR_COLUMN, FRUTO_COLUMN]
         df = (
             df.groupby(grp_keys, dropna=False, group_keys=False)
               .apply(
                   _first_sample_fill,
-                  NUMERIC_COLS + ["Firmeza punto débil", "firmezas mejillas", "grp_firmezas_mejillas"]
+                  NUMERIC_COLS
+                  + ["avg_mejillas", "Firmeza punto valor", "Firmeza punto columna"]
               )
         )
-        # 6) Clasificación de grupos
-        cols_to_classify = ["Firmeza punto débil", COL_BRIX, COL_ACIDEZ]
-        for col in cols_to_classify:
-            out = f"grp_{col.replace(' ', '_')}"
-            df[out] = df.apply(lambda r, c=col: _classify_row(r, c, rules_plum, rules_nect), axis=1)
+        # 4) Clasificación de grupos usando las reglas configuradas
+        # Preparamos una lista de columnas a clasificar con sus alias apropiados
+        cols_to_classify = [
+            ("Firmeza punto valor", "Firmeza_punto_valor"),
+            ("avg_mejillas", "avg_mejillas"),
+            (COL_BRIX, COL_BRIX),
+            (COL_ACIDEZ, COL_ACIDEZ),
+        ]
+        for col_orig, alias in cols_to_classify:
+            out = f"grp_{alias}"
+            df[out] = df.apply(lambda r, c=col_orig: _classify_row(r, c, rules_plum, rules_nect), axis=1)
         # 7) Cluster individual
         grp_cols = [c for c in df.columns if c.startswith("grp_")]
         # 7) Cluster individual: cálculo de cond_sum según el método elegido
@@ -554,56 +555,52 @@ def segmentacion_app():
     )
 
     # -----------------------------------------------------------------------
+    # Selección de variables para la firmeza punto débil y método de mejillas
+    # -----------------------------------------------------------------------
+    st.subheader("Configuración de métricas de firmeza")
+    # Variables disponibles para el cálculo de la firmeza punto débil
+    available_fpd_vars = list(COL_FIRMEZA_ALL)
+    # Inicializar selección por defecto si no existe
+    if "fpd_vars" not in st.session_state:
+        st.session_state["fpd_vars"] = available_fpd_vars
+    fpd_selection = st.multiselect(
+        "Variables a considerar para la firmeza punto débil",
+        options=available_fpd_vars,
+        default=st.session_state["fpd_vars"],
+        key="fpd_vars"
+    )
+    # Método de agregación para las mejillas (media o moda)
+    if "mejillas_method" not in st.session_state:
+        st.session_state["mejillas_method"] = "media"
+    st.session_state["mejillas_method"] = st.selectbox(
+        "Método de agregación de la medida de mejillas (avg_mejillas)",
+        options=["media", "moda"],
+        index=["media", "moda"].index(st.session_state["mejillas_method"]),
+        key="mejillas_method_select"
+    )
+
+    # -----------------------------------------------------------------------
     # Reglas editables
     # -----------------------------------------------------------------------
-    st.subheader("Editar reglas de segmentación")
-    # Inicializar reglas en session_state la primera vez
+    # -----------------------------------------------------------------------
+    # Reglas de segmentación
+    #
+    # Para mantener la compatibilidad con la edición de reglas a través del
+    # árbol de decisiones, seguimos cargando las reglas desde la sesión.  Sin
+    # embargo, ya no mostramos tablas de edición separadas.  El usuario
+    # solamente puede crear nuevas métricas o modificar bandas a través del
+    # árbol de decisiones.
+    # -----------------------------------------------------------------------
     if "plum_rules_df" not in st.session_state:
         st.session_state["plum_rules_df"] = plum_rules_to_df(DEFAULT_PLUM_RULES)
     if "nect_rules_df" not in st.session_state:
         st.session_state["nect_rules_df"] = nect_rules_to_df(DEFAULT_NECT_RULES)
 
-    # Mostrar cada regla por separado para mayor claridad
-    # Se eliminó la vista de lectura detallada para evitar ruido visual
-
-    # Construir los diccionarios de reglas a partir de las tablas guardadas en session_state
     current_plum_rules = df_to_plum_rules(st.session_state["plum_rules_df"])
     current_nect_rules = df_to_nect_rules(st.session_state["nect_rules_df"])
 
     # -----------------------------------------------------------------------
     # Editor tabular para añadir/eliminar reglas y decidir si se aplican
-    # -----------------------------------------------------------------------
-    st.subheader("Editar y añadir reglas (vista tabla)")
-    st.write("Aquí puedes modificar las reglas existentes o agregar nuevas filas. El campo `apply` permite activar o desactivar una regla sin borrarla.")
-    colp, coln = st.columns(2)
-    with colp:
-        st.markdown("**Reglas de Ciruela**")
-        edited_plum_df = st.data_editor(
-            st.session_state["plum_rules_df"],
-            use_container_width=True,
-            height=300,
-            num_rows="dynamic",
-            key="plum_rules_table_editor"
-        )
-        if st.button("Guardar cambios en reglas de Ciruela"):
-            # Actualizar DataFrame y diccionario
-            st.session_state["plum_rules_df"] = edited_plum_df
-            current_plum_rules = df_to_plum_rules(edited_plum_df)
-            st.success("Reglas de Ciruela actualizadas.")
-    with coln:
-        st.markdown("**Reglas de Nectarín**")
-        edited_nect_df = st.data_editor(
-            st.session_state["nect_rules_df"],
-            use_container_width=True,
-            height=300,
-            num_rows="dynamic",
-            key="nect_rules_table_editor"
-        )
-        if st.button("Guardar cambios en reglas de Nectarín"):
-            st.session_state["nect_rules_df"] = edited_nect_df
-            current_nect_rules = df_to_nect_rules(edited_nect_df)
-            st.success("Reglas de Nectarín actualizadas.")
-
     # -----------------------------------------------------------------------
     # Árbol de decisión para visualizar y editar reglas de forma más intuitiva
     # -----------------------------------------------------------------------
@@ -622,6 +619,22 @@ def segmentacion_app():
     if especie_seleccion == "Ciruela":
         subtipo_sel = st.selectbox("Sub‑tipo de ciruela", list(current_plum_rules.keys()))
         metrica_sel = st.selectbox("Métrica", list(current_plum_rules[subtipo_sel].keys()))
+        # Posibilidad de añadir una nueva métrica para este subtipo
+        with st.expander("Agregar nueva métrica para este sub‑tipo", expanded=False):
+            nueva_metric = st.text_input("Nombre de la nueva métrica", key=f"new_metric_plum_{subtipo_sel}")
+            if st.button("Crear métrica", key=f"create_metric_plum_{subtipo_sel}"):
+                if nueva_metric:
+                    if nueva_metric not in current_plum_rules[subtipo_sel]:
+                        # Definir bandas por defecto: 4 grupos con límites equiespaciados 0,1,2 (el usuario debe ajustarlos)
+                        default_bands = [(-np.inf, 0.0, 4), (0.0, 1.0, 3), (1.0, 2.0, 2), (2.0, np.inf, 1)]
+                        current_plum_rules[subtipo_sel][nueva_metric] = default_bands
+                        # Actualizar DataFrame
+                        st.session_state["plum_rules_df"] = plum_rules_to_df(current_plum_rules)
+                        st.success(f"Métrica '{nueva_metric}' añadida.")
+                    else:
+                        st.warning("La métrica ya existe.")
+                else:
+                    st.warning("Debes introducir un nombre para la nueva métrica.")
         bandas = current_plum_rules[subtipo_sel][metrica_sel]
         # Mostrar bandas con colores
         bandas_df = pd.DataFrame(bandas, columns=["Min", "Max", "Grupo"])
@@ -670,6 +683,22 @@ def segmentacion_app():
         color_sel = st.selectbox("Color de pulpa", list(current_nect_rules.keys()))
         periodo_sel = st.selectbox("Periodo de cosecha", list(current_nect_rules[color_sel].keys()))
         metrica_sel_n = st.selectbox("Métrica", list(current_nect_rules[color_sel][periodo_sel].keys()))
+        # Posibilidad de añadir una nueva métrica para este color/periodo
+        with st.expander("Agregar nueva métrica para este color/periodo", expanded=False):
+            nueva_metric_n = st.text_input(
+                "Nombre de la nueva métrica", key=f"new_metric_nect_{color_sel}_{periodo_sel}"
+            )
+            if st.button("Crear métrica", key=f"create_metric_nect_{color_sel}_{periodo_sel}"):
+                if nueva_metric_n:
+                    if nueva_metric_n not in current_nect_rules[color_sel][periodo_sel]:
+                        default_bands_n = [(-np.inf, 0.0, 4), (0.0, 1.0, 3), (1.0, 2.0, 2), (2.0, np.inf, 1)]
+                        current_nect_rules[color_sel][periodo_sel][nueva_metric_n] = default_bands_n
+                        st.session_state["nect_rules_df"] = nect_rules_to_df(current_nect_rules)
+                        st.success(f"Métrica '{nueva_metric_n}' añadida.")
+                    else:
+                        st.warning("La métrica ya existe.")
+                else:
+                    st.warning("Debes introducir un nombre para la nueva métrica.")
         bandas_n = current_nect_rules[color_sel][periodo_sel][metrica_sel_n]
         # Mostrar bandas con colores
         bandas_df_n = pd.DataFrame(bandas_n, columns=["Min", "Max", "Grupo"])
@@ -774,30 +803,88 @@ def segmentacion_app():
                 tmp_df[f'Outlier_{col}'] = flags
             st.markdown("### Previsualización y edición del archivo cargado")
             st.write("Se detectan outliers por especie, variedad, muestra y periodo usando ±2 desviaciones estándar. Las celdas marcadas en rojo indican outliers.")
-            # Mostrar sólo los outliers con estilo si el número de celdas a pintar es razonable
-            df_outliers = tmp_df[tmp_df['Outlier'] == True]
-            if not df_outliers.empty:
-                # Limitar el número de filas a mostrar para evitar exceder el límite de estilos
-                max_show = 300
-                df_display = df_outliers.copy()
-                if len(df_display) > max_show:
-                    st.info(f"Hay {len(df_display)} filas con outliers; mostrando las primeras {max_show}.")
-                    df_display = df_display.head(max_show)
-                def highlight_outliers_cell(val, colname, row):
-                    flag_col = f'Outlier_{colname}'
-                    if flag_col in row and row[flag_col]:
-                        return 'background-color: #ffcccc'
-                    return ''
-                def style_func(data):
-                    return data.apply(lambda row: [ 'background-color: #ffcccc' if (f'Outlier_'+data.columns[i]) in row.index and row[f'Outlier_'+data.columns[i]] else '' for i in range(len(data.columns)) ], axis=1)
-                st.write(df_display.style.apply(lambda row: [
-                    'background-color: #ffcccc' if (f'Outlier_' + col) in row and row[f'Outlier_' + col] else ''
-                    for col in df_display.columns
-                ], axis=1))
+            # Construir tabla de outliers con media de grupo para cada métrica
+            outlier_rows = []
+            # Calcular medias de grupo para cada columna numérica
+            group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period']
+            group_means = {}
+            for col in [c for c in NUMERIC_COLS if c in tmp_df.columns]:
+                group_means[col] = tmp_df.groupby(group_cols)[col].transform('mean')
+                tmp_df[f'Mean_{col}'] = group_means[col]
+                # crear fila por outlier
+                flagged = tmp_df[tmp_df.get(f'Outlier_{col}', False)]
+                for idx, r in flagged.iterrows():
+                    outlier_rows.append({
+                        'index': idx,
+                        'Especie': r[ESPECIE_COLUMN],
+                        'Variedad': r[VAR_COLUMN],
+                        'Fruto': r[FRUTO_COLUMN],
+                        'Periodo': r['harvest_period'],
+                        'Métrica': col,
+                        'Valor': r[col],
+                        'Media_grupo': r[f'Mean_{col}'],
+                        'Diferencia': r[col] - r[f'Mean_{col}'],
+                    })
+            if outlier_rows:
+                df_out_table = pd.DataFrame(outlier_rows)
+                st.info(f"Se detectaron {len(df_out_table)} valores outlier.")
+                # Filtros para especie, variedad y periodo
+                esp_options = ['Todas'] + sorted(df_out_table['Especie'].dropna().unique())
+                esp_sel = st.selectbox("Filtrar por especie", options=esp_options, key="filtro_out_especie")
+                var_options = ['Todas'] + sorted(df_out_table['Variedad'].dropna().unique())
+                var_sel = st.selectbox("Filtrar por variedad", options=var_options, key="filtro_out_variedad")
+                per_options = ['Todas'] + sorted(df_out_table['Periodo'].dropna().unique())
+                per_sel = st.selectbox("Filtrar por periodo", options=per_options, key="filtro_out_periodo")
+                df_filt = df_out_table.copy()
+                if esp_sel != 'Todas':
+                    df_filt = df_filt[df_filt['Especie'] == esp_sel]
+                if var_sel != 'Todas':
+                    df_filt = df_filt[df_filt['Variedad'] == var_sel]
+                if per_sel != 'Todas':
+                    df_filt = df_filt[df_filt['Periodo'] == per_sel]
+                # Editor para modificar sólo la columna Valor
+                edited_outliers = st.data_editor(
+                    df_filt,
+                    use_container_width=True,
+                    height=350,
+                    num_rows="dynamic",
+                    column_config={
+                        'Valor': {'editable': True},
+                        'Media_grupo': {'editable': False},
+                        'Diferencia': {'editable': False},
+                        'index': {'editable': False},
+                        'Especie': {'editable': False},
+                        'Variedad': {'editable': False},
+                        'Fruto': {'editable': False},
+                        'Periodo': {'editable': False},
+                        'Métrica': {'editable': False},
+                    },
+                    key="outliers_editor"
+                )
+                # Botón para guardar cambios en outliers
+                if st.button("Aplicar cambios a los outliers"):
+                    # Actualizar tmp_df con los valores editados
+                    for _, row in edited_outliers.iterrows():
+                        idx = int(row['index'])
+                        col = row['Métrica']
+                        val = row['Valor']
+                        tmp_df.at[idx, col] = val
+                    st.success("Se actualizaron los valores de outliers en el dataset.")
+                # Descargar tabla de outliers
+                out_buffer = io.BytesIO()
+                with pd.ExcelWriter(out_buffer, engine='xlsxwriter') as writer:
+                    edited_outliers.to_excel(writer, index=False, sheet_name='Outliers')
+                out_buffer.seek(0)
+                st.download_button(
+                    label="📥 Descargar tabla de outliers",
+                    data=out_buffer.getvalue(),
+                    file_name="outliers.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
             else:
                 st.info("No se detectaron outliers en los datos cargados.")
-            # Editor interactivo: sólo las columnas originales (sin columnas Outlier_*)
-            cols_to_edit = [c for c in tmp_df.columns if not c.startswith('Outlier_')]
+            # Editor interactivo: sólo las columnas originales (sin columnas Outlier_*, Mean_*)
+            cols_to_edit = [c for c in tmp_df.columns if not c.startswith('Outlier_') and not c.startswith('Mean_')]
             edited_df = st.data_editor(
                 tmp_df[cols_to_edit],
                 use_container_width=True,
@@ -835,7 +922,15 @@ def segmentacion_app():
             if st.button("Procesar datos editados y clasificar"):
                 # Procesar utilizando el DataFrame editado
                 try:
-                    df_processed = process_carozos(edited_df, current_plum_rules, current_nect_rules, cond_method, grp_method)
+                    df_processed = process_carozos(
+                        edited_df,
+                        current_plum_rules,
+                        current_nect_rules,
+                        cond_method,
+                        grp_method,
+                        fpd_vars=st.session_state.get("fpd_vars"),
+                        mejillas_method=st.session_state.get("mejillas_method"),
+                    )
                 except Exception as e:
                     st.error(f"Error al procesar el archivo: {e}")
                     df_processed = None
