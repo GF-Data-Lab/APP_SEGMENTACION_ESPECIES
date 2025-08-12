@@ -344,6 +344,34 @@ def segmentacion_app():
             return "tardia"
         return "tardia"
 
+    # -----------------------------------------------------------------------
+    # Conversión segura de fechas
+    #
+    # Las fechas de evaluación pueden venir en formato dd-mm-aaaa o mm-dd-aaaa.
+    # Esta función intenta interpretarlas usando dayfirst=True primero y, si
+    # produce una fecha inválida, vuelve a intentar con dayfirst=False.
+    # Devuelve pd.NaT si no es posible parsear.
+    # -----------------------------------------------------------------------
+    def _safe_parse_date(val: Union[str, float, int, pd.Timestamp]) -> pd.Timestamp | None:
+        if isinstance(val, pd.Timestamp):
+            return val
+        if not isinstance(val, str):
+            try:
+                return pd.to_datetime(val, errors="coerce")
+            except Exception:
+                return pd.NaT
+        try:
+            dt = pd.to_datetime(val, dayfirst=True, errors="coerce")
+        except Exception:
+            dt = pd.NaT
+        # Si no se obtuvo una fecha válida, intentamos dayfirst=False
+        if pd.isna(dt):
+            try:
+                dt = pd.to_datetime(val, dayfirst=False, errors="coerce")
+            except Exception:
+                dt = pd.NaT
+        return dt
+
     def process_carozos(
         file: Union[str, Path, pd.DataFrame],
         rules_plum: Dict,
@@ -370,7 +398,8 @@ def segmentacion_app():
             df[COLOR_COLUMN] = default_color
         df[COLOR_COLUMN] = df[COLOR_COLUMN].fillna(default_color)
         # 2) Tipos y periodos
-        df[DATE_COLUMN] = pd.to_datetime(df[DATE_COLUMN], errors="coerce")
+        # Parsear fechas de manera robusta (dd-mm-aaaa o mm-dd-aaaa)
+        df[DATE_COLUMN] = df[DATE_COLUMN].apply(_safe_parse_date)
         # Asignación de período y sub-tipo según especie
         df["plum_subtype"] = df.apply(_plum_subtype, axis=1)
         df["harvest_period"] = "sin_fecha"  # inicializar
@@ -772,7 +801,8 @@ def segmentacion_app():
             tmp_df = df_upload.copy()
             # Convertir fechas
             if DATE_COLUMN in tmp_df.columns:
-                tmp_df[DATE_COLUMN] = pd.to_datetime(tmp_df[DATE_COLUMN], errors="coerce")
+                # Parsear fechas utilizando el mismo método robusto de la función principal
+                tmp_df[DATE_COLUMN] = tmp_df[DATE_COLUMN].apply(_safe_parse_date)
                 # Asignar periodo para cada registro (utilizando funciones de cosecha)
                 periods = []
                 for idx, row in tmp_df.iterrows():
@@ -993,6 +1023,101 @@ def segmentacion_app():
                     else:
                         bins = pd.cut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
                     agg_groups["cluster_grp"] = bins
+                    # Calcular agregados por variedad (sin distinguir fruto ni periodo)
+                    if grp_method == "mean":
+                        cond_agg_var = df_processed.groupby(VAR_COLUMN, dropna=False)["cond_sum"].mean()
+                    else:
+                        def _agg_mode_var(s):
+                            m = s.mode()
+                            return m.iloc[0] if not m.empty else np.nan
+                        cond_agg_var = df_processed.groupby(VAR_COLUMN, dropna=False)["cond_sum"].agg(_agg_mode_var)
+                    agg_variedad = (
+                        df_processed
+                        .groupby(VAR_COLUMN, dropna=False)
+                        .agg(
+                            muestras=("cond_sum", "size"),
+                            promedio_cond_sum=("cond_sum", "mean"),
+                            promedio_brix=(COL_BRIX, "mean"),
+                            promedio_acidez=(COL_ACIDEZ, "mean"),
+                            promedio_firmeza_punto=("Firmeza punto valor", "mean"),
+                            promedio_mejillas=("avg_mejillas", "mean"),
+                        )
+                        .reset_index()
+                    )
+                    agg_variedad["cond_sum_grp"] = cond_agg_var.values
+                    if agg_variedad["cond_sum_grp"].notna().nunique() >= 4:
+                        bins_var = pd.qcut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
+                    else:
+                        bins_var = pd.cut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
+                    agg_variedad["cluster_grp"] = bins_var
+
+                    # Clasificación agregada por métricas basándose en los promedios del grupo
+                    # Construir un mapa con información de sub‑tipo y color para cada grupo
+                    group_info = {}
+                    for key, grp in df_processed.groupby(group_cols):
+                        first_row = grp.iloc[0]
+                        group_info[key] = {
+                            'plum_subtype': first_row.get('plum_subtype', 'cherry'),
+                            'color': str(first_row.get(COLOR_COLUMN, '')).strip().lower(),
+                        }
+                    # Clasificar cada métrica promedio
+                    brix_classes = []
+                    mej_classes = []
+                    fpd_classes = []
+                    acid_classes = []
+                    for _, row in agg_groups.iterrows():
+                        key = (row[ESPECIE_COLUMN], row[VAR_COLUMN], row[FRUTO_COLUMN], row['harvest_period'])
+                        info = group_info.get(key, {})
+                        especie = row[ESPECIE_COLUMN]
+                        # Seleccionar reglas según especie
+                        if especie == 'Ciruela':
+                            subtype = info.get('plum_subtype', 'cherry')
+                            rules_dict = current_plum_rules.get(subtype, {})
+                        else:
+                            # Determinar color base (amarilla o blanca)
+                            color_key = 'blanca' if info.get('color', 'amarilla').startswith('blanc') else 'amarilla'
+                            period_key = row['harvest_period']
+                            rules_dict = current_nect_rules.get(color_key, {}).get(period_key, {})
+                        # Obtener reglas por métrica
+                        rules_brix = rules_dict.get(COL_BRIX, [])
+                        rules_mej = rules_dict.get('FIRMEZA_MEJ', [])
+                        rules_fpd = rules_dict.get('FIRMEZA_PUNTO', [])
+                        rules_acid = rules_dict.get(COL_ACIDEZ, [])
+                        # Clasificación usando las reglas
+                        brix_classes.append(_classify_value(row['promedio_brix'], rules_brix))
+                        mej_classes.append(_classify_value(row['promedio_mejillas'], rules_mej))
+                        fpd_classes.append(_classify_value(row['promedio_firmeza_punto'], rules_fpd))
+                        # Para acidez, utilizar sólo el primer valor de la muestra si existe
+                        # En el promedio de acidez ya se utilizó la media; si se desea tomar el primer valor,
+                        # podemos tomar el primer valor de esa combinación en df_processed.
+                        # Buscamos el primer valor real (no nulo) en df_processed para este grupo
+                        df_group = df_processed[(df_processed[ESPECIE_COLUMN] == row[ESPECIE_COLUMN]) &
+                                               (df_processed[VAR_COLUMN] == row[VAR_COLUMN]) &
+                                               (df_processed[FRUTO_COLUMN] == row[FRUTO_COLUMN]) &
+                                               (df_processed['harvest_period'] == row['harvest_period'])]
+                        first_acid = df_group[COL_ACIDEZ].dropna().iloc[0] if not df_group[COL_ACIDEZ].dropna().empty else row['promedio_acidez']
+                        acid_classes.append(_classify_value(first_acid, rules_acid))
+                    # Añadir columnas de bandas por métrica
+                    agg_groups['grp_brix'] = brix_classes
+                    agg_groups['grp_mejillas'] = mej_classes
+                    agg_groups['grp_firmeza_punto'] = fpd_classes
+                    agg_groups['grp_acidez'] = acid_classes
+                    # Recalcular cond_sum a nivel de grupo con estas bandas
+                    metric_groups = ['grp_brix', 'grp_mejillas', 'grp_firmeza_punto', 'grp_acidez']
+                    if cond_method == 'media':
+                        agg_groups['cond_sum_metric'] = agg_groups[metric_groups].mean(axis=1, skipna=True)
+                    else:
+                        agg_groups['cond_sum_metric'] = agg_groups[metric_groups].sum(axis=1, min_count=1)
+                    # Calcular cluster basado en cond_sum_metric
+                    if agg_groups['cond_sum_metric'].notna().nunique() >= 4:
+                        bins_metric = pd.qcut(agg_groups['cond_sum_metric'], 4, labels=[1,2,3,4])
+                    else:
+                        bins_metric = pd.cut(agg_groups['cond_sum_metric'], 4, labels=[1,2,3,4])
+                    agg_groups['cluster_metric'] = bins_metric
+                    # Sustituir cluster_grp por el resultado basado en métricas agregadas
+                    agg_groups['cluster_grp'] = agg_groups['cluster_metric']
+                    agg_groups['cond_sum_grp'] = agg_groups['cond_sum_metric']
+
                     # Estilo para colorear según cluster
                     def color_cluster(val):
                         try:
@@ -1001,19 +1126,68 @@ def segmentacion_app():
                         except:
                             return ''
                     def highlight_inconsistent(row):
-                        color = '#ffd6d6' if row.get('periodo_inconsistente') else ''
-                        return [color for _ in row]
+                        """Devuelve estilos CSS para filas con periodos inconsistentes."""
+                        if row.get('periodo_inconsistente'):
+                            return ['background-color: #ffd6d6;' for _ in row]
+                        else:
+                            return ['' for _ in row]
                     styled_agg = (
                         agg_groups.style
                         .applymap(color_cluster, subset=["cluster_grp"])
                         .apply(highlight_inconsistent, axis=1)
                     )
                     st.dataframe(styled_agg, use_container_width=True, height=400)
+
+                    # Gráfico de las combinaciones en dos dimensiones (PCA)
+                    st.markdown("#### Distribución PCA de los grupos")
+                    try:
+                        # Importaciones necesarias para el gráfico PCA
+                        from sklearn.preprocessing import StandardScaler
+                        from sklearn.decomposition import PCA
+                        import altair as alt
+                        # Seleccionamos las características numéricas para el análisis
+                        pca_features = [
+                            "promedio_cond_sum",
+                            "promedio_brix",
+                            "promedio_acidez",
+                            "promedio_firmeza_punto",
+                            "promedio_mejillas",
+                        ]
+                        df_features = agg_groups[pca_features].fillna(0)
+                        # Normalizamos
+                        scaler = StandardScaler()
+                        X_scaled = scaler.fit_transform(df_features)
+                        pca = PCA(n_components=2)
+                        pcs = pca.fit_transform(X_scaled)
+                        agg_groups["PC1"] = pcs[:, 0]
+                        agg_groups["PC2"] = pcs[:, 1]
+                        # Construir gráfico interactivo con Altair
+                        color_scale = alt.Scale(domain=[1,2,3,4], range=[group_colors[1], group_colors[2], group_colors[3], group_colors[4]])
+                        chart = (
+                            alt.Chart(agg_groups)
+                            .mark_circle(size=80)
+                            .encode(
+                                x=alt.X("PC1", title="Componente principal 1"),
+                                y=alt.Y("PC2", title="Componente principal 2"),
+                                color=alt.Color("cluster_grp:N", scale=color_scale, legend=alt.Legend(title="Cluster")),
+                                tooltip=[ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period', 'cluster_grp', 'promedio_acidez']
+                            )
+                            .properties(width='container', height=400)
+                            .interactive()
+                        )
+                        st.altair_chart(chart, use_container_width=True)
+                    except Exception as e:
+                        st.info(f"No fue posible generar el gráfico PCA: {e}")
+
+                    # Mostrar agregados por variedad (sin separar fruto ni periodo)
+                    st.markdown("### Agregados por variedad")
+                    st.dataframe(agg_variedad, use_container_width=True, height=300)
                     # Botón para descargar resultados completos y agregados
                     buf = io.BytesIO()
                     with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
                         df_processed.to_excel(writer, index=False, sheet_name='Carozos')
-                        agg.to_excel(writer, index=False, sheet_name='Agregados_variedad')
+                        agg_groups.to_excel(writer, index=False, sheet_name='Agregados_grupo')
+                        agg_variedad.to_excel(writer, index=False, sheet_name='Agregados_variedad')
                     buf.seek(0)
                     st.download_button(
                         label="📥 Descargar resultados como Excel",
