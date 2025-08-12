@@ -72,7 +72,7 @@ def segmentacion_app():
     ESPECIES_VALIDAS = {"Ciruela", "Nectarin"}
 
     WEIGHT_COLS = ("Peso (g)", "Calibre", "Peso")
-    COL_FIRMEZA_PUNTO = ("Quilla", "Hombro", "Punta")
+    COL_FIRMEZA_PUNTO = ("Quilla", "Hombro")
     COL_FIRMEZA_MEJILLAS = ("Mejilla 1", "Mejilla 2")
     COL_FIRMEZA_ALL = list(COL_FIRMEZA_PUNTO + COL_FIRMEZA_MEJILLAS)
 
@@ -416,7 +416,8 @@ def segmentacion_app():
             df["Firmeza punto columna"] = fpd_means.idxmin(axis=1)
         # 3.3) Relleno de nulos por primera muestra
         # 5) Relleno de nulos por primera muestra
-        grp_keys = [VAR_COLUMN, FRUTO_COLUMN]
+        # Agrupaciones para relleno, clasificación y clusters incluyen especie y periodo de cosecha
+        grp_keys = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period']
         df = (
             df.groupby(grp_keys, dropna=False, group_keys=False)
               .apply(
@@ -477,6 +478,14 @@ def segmentacion_app():
         df = df.merge(
             grp_cond[grp_keys + ["cluster_grp"]], on=grp_keys, how="left"
         )
+        # 9) Validación de fechas: identificar registros con periodo 'muy_temprana' cuyo mes esté fuera del rango esperado
+        try:
+            df["periodo_inconsistente"] = False
+            mask_mt = df["harvest_period"] == "muy_temprana"
+            # Fechas con mes posterior a diciembre (1,2,3) o posterior a febrero son atípicas para muy temprana
+            df.loc[mask_mt, "periodo_inconsistente"] = df.loc[mask_mt, DATE_COLUMN].dt.month.isin([1,2,3])
+        except Exception:
+            df["periodo_inconsistente"] = False
         return df
 
     # -----------------------------------------------------------------------
@@ -952,34 +961,54 @@ def segmentacion_app():
                         filtro = df_processed
                     st.markdown(f"#### Resultados para la variedad: {seleccion_var}")
                     st.dataframe(filtro, use_container_width=True, height=400)
-                    # Agregados por variedad usando el método seleccionado para cluster grupal
-                    st.markdown("### Agregados por variedad")
-                    # Calcular agregados dependiendo del método
+                    # Agregados por grupo (especie, variedad, fruto y periodo)
+                    st.markdown("### Agregados por combinación de especie, variedad, fruto y periodo")
+                    group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period']
+                    # Cálculo de promedios de cond_sum y otros indicadores por grupo
                     if grp_method == "mean":
-                        agg_cond = df_processed.groupby(VAR_COLUMN, dropna=False)["cond_sum"].mean()
-                    else:  # mode
+                        cond_agg = df_processed.groupby(group_cols, dropna=False)["cond_sum"].mean()
+                    else:
                         def _agg_mode(s):
                             m = s.mode()
                             return m.iloc[0] if not m.empty else np.nan
-                        agg_cond = df_processed.groupby(VAR_COLUMN, dropna=False)["cond_sum"].agg(_agg_mode)
-                    agg = (
+                        cond_agg = df_processed.groupby(group_cols, dropna=False)["cond_sum"].agg(_agg_mode)
+                    agg_groups = (
                         df_processed
-                        .groupby(VAR_COLUMN, dropna=False)
+                        .groupby(group_cols, dropna=False)
                         .agg(
+                            muestras=("cond_sum", "size"),
                             promedio_cond_sum=("cond_sum", "mean"),
-                            muestras=(VAR_COLUMN, "size"),
+                            promedio_brix=(COL_BRIX, "mean"),
+                            promedio_acidez=(COL_ACIDEZ, "mean"),
+                            promedio_firmeza_punto=("Firmeza punto valor", "mean"),
+                            promedio_mejillas=("avg_mejillas", "mean"),
+                            periodo_inconsistente=("periodo_inconsistente", "max"),
                         )
                         .reset_index()
                     )
-                    agg["cond_sum_grp"] = agg_cond.values
+                    agg_groups["cond_sum_grp"] = cond_agg.values
                     # Binning de clusters grupales para visualización
-                    # Para mantener coherencia con el método, calculamos los clusters
-                    if agg["cond_sum_grp"].notna().nunique() >= 4:
-                        bins = pd.qcut(agg["cond_sum_grp"], 4, labels=[1,2,3,4])
+                    if agg_groups["cond_sum_grp"].notna().nunique() >= 4:
+                        bins = pd.qcut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
                     else:
-                        bins = pd.cut(agg["cond_sum_grp"], 4, labels=[1,2,3,4])
-                    agg["cluster_grp"] = bins
-                    st.dataframe(agg[[VAR_COLUMN, "muestras", "promedio_cond_sum", "cond_sum_grp", "cluster_grp"]], use_container_width=True, height=300)
+                        bins = pd.cut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
+                    agg_groups["cluster_grp"] = bins
+                    # Estilo para colorear según cluster
+                    def color_cluster(val):
+                        try:
+                            grp = int(val)
+                            return f"background-color: {group_colors.get(grp, '')}"
+                        except:
+                            return ''
+                    def highlight_inconsistent(row):
+                        color = '#ffd6d6' if row.get('periodo_inconsistente') else ''
+                        return [color for _ in row]
+                    styled_agg = (
+                        agg_groups.style
+                        .applymap(color_cluster, subset=["cluster_grp"])
+                        .apply(highlight_inconsistent, axis=1)
+                    )
+                    st.dataframe(styled_agg, use_container_width=True, height=400)
                     # Botón para descargar resultados completos y agregados
                     buf = io.BytesIO()
                     with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
