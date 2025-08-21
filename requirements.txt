@@ -7,3 +7,4 @@ scikit-learn-extra
 openpyxl
 altair
 xlsxwriter
+jinja2
