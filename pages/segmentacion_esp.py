@@ -72,7 +72,7 @@ def segmentacion_app():
     ESPECIES_VALIDAS = {"Ciruela", "Nectarin"}
 
     WEIGHT_COLS = ("Peso (g)", "Calibre", "Peso")
-    COL_FIRMEZA_PUNTO = ("Quilla", "Hombro")
+    COL_FIRMEZA_PUNTO = ("Quilla", "Hombro","Punta")
     COL_FIRMEZA_MEJILLAS = ("Mejilla 1", "Mejilla 2")
     COL_FIRMEZA_ALL = list(COL_FIRMEZA_PUNTO + COL_FIRMEZA_MEJILLAS)
 
