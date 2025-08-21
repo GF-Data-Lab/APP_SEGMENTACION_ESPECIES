@@ -27,8 +27,8 @@ import io
 from utils import show_logo
 
 
-def segmentacion_app():
-    """Construye la página de segmentación de especies con mejoras interactivas."""
+def segmentacion_app(especie: str):
+    """Construye la página de segmentación para una especie específica."""
     # -------------------------------------------------------------------------
     # Configuración general de la página
     # -------------------------------------------------------------------------
@@ -69,7 +69,7 @@ def segmentacion_app():
     VAR_COLUMN = "Variedad"
     FRUTO_COLUMN = "Fruto (n°)"
 
-    ESPECIES_VALIDAS = {"Ciruela", "Nectarin"}
+    ESPECIES_VALIDAS = {especie}
 
     WEIGHT_COLS = ("Peso (g)", "Calibre", "Peso")
     COL_FIRMEZA_PUNTO = ("Quilla", "Hombro","Punta")
@@ -370,6 +370,8 @@ def segmentacion_app():
                 dt = pd.to_datetime(val, dayfirst=False, errors="coerce")
             except Exception:
                 dt = pd.NaT
+        if not pd.isna(dt) and dt.month not in [8,9,10,11,12,1,2]:
+            return pd.NaT
         return dt
 
     def process_carozos(
@@ -511,8 +513,8 @@ def segmentacion_app():
         try:
             df["periodo_inconsistente"] = False
             mask_mt = df["harvest_period"] == "muy_temprana"
-            # Fechas con mes posterior a diciembre (1,2,3) o posterior a febrero son atípicas para muy temprana
-            df.loc[mask_mt, "periodo_inconsistente"] = df.loc[mask_mt, DATE_COLUMN].dt.month.isin([1,2,3])
+            # Fechas fuera de agosto-noviembre son atípicas para muy temprana
+            df.loc[mask_mt, "periodo_inconsistente"] = ~df.loc[mask_mt, DATE_COLUMN].dt.month.isin([8,9,10,11])
         except Exception:
             df["periodo_inconsistente"] = False
         return df
@@ -525,9 +527,10 @@ def segmentacion_app():
             show_logo()
             if st.button('Página de Inicio 🏚️'):
                 st.switch_page('app.py')
-            if st.button('Segmentación de especies 🍑'):
-                # no hacemos nada: estamos en esta página
-                pass
+            if st.button('Segmentación Ciruela 🍑'):
+                st.switch_page('pages/segmentacion_ciruela.py')
+            if st.button('Segmentación Nectarina 🍑'):
+                st.switch_page('pages/segmentacion_nectarina.py')
             if st.button('Modelo de Clasificación'):
                 st.switch_page('pages/Cluster_especies.py')
             if st.button('Análisis exploratorio'):
@@ -535,7 +538,8 @@ def segmentacion_app():
 
     generar_menu()
 
-    st.title("🛠️ Segmentación por Especies (Mejorada)")
+    titulo_especie = "Nectarina" if especie.lower().startswith("nect") else "Ciruela"
+    st.title(f"🛠️ Segmentación {titulo_especie}")
     st.write(
         """
         Sube tu archivo Excel `MAESTRO CAROZOS FINAL COMPLETO CG.xlsx` y obtén los clusters,
@@ -559,34 +563,31 @@ def segmentacion_app():
     if "default_period" not in st.session_state:
         st.session_state["default_period"] = "tardia"
 
-    # Selector para tipo de ciruela por defecto cuando el peso es desconocido
-    default_plum = st.selectbox(
-        "Tipo de ciruela por defecto si el peso no está disponible",
-        options=["cherry", "candy"],
-        index=["cherry", "candy"].index(st.session_state["default_plum_subtype"]),
-        key="default_plum_subtype"
-    )
-    # Sliders para umbrales de peso
-    col1, col2 = st.columns(2)
-    with col1:
+    if especie == "Ciruela":
+        default_plum = st.selectbox(
+            "Tipo de ciruela por defecto si el peso no está disponible",
+            options=["cherry", "candy"],
+            index=["cherry", "candy"].index(st.session_state["default_plum_subtype"]),
+            key="default_plum_subtype",
+        )
         st.session_state["cherry_upper"] = st.number_input(
             "Peso máximo para cherry (g)",
             min_value=10.0,
             max_value=200.0,
             value=float(st.session_state["cherry_upper"]),
-            step=1.0
+            step=1.0,
         )
-    with col2:
+    else:
         st.session_state["default_color"] = st.selectbox(
-            "Color de pulpa por defecto para Nectarín (si falta)",
+            "Color de pulpa por defecto para Nectarina (si falta)",
             options=["Amarilla", "Blanca"],
-            index=["Amarilla", "Blanca"].index(st.session_state["default_color"])
+            index=["Amarilla", "Blanca"].index(st.session_state["default_color"]),
         )
-    st.session_state["default_period"] = st.selectbox(
-        "Periodo de cosecha por defecto para Nectarín (si falta fecha)",
-        options=["muy_temprana", "temprana", "tardia", "sin_fecha"],
-        index=["muy_temprana", "temprana", "tardia", "sin_fecha"].index(st.session_state["default_period"])
-    )
+        st.session_state["default_period"] = st.selectbox(
+            "Periodo de cosecha por defecto para Nectarina (si falta fecha)",
+            options=["muy_temprana", "temprana", "tardia", "sin_fecha"],
+            index=["muy_temprana", "temprana", "tardia", "sin_fecha"].index(st.session_state["default_period"]),
+        )
 
     st.info(
         "Puedes cambiar estos valores y ver cómo afectan a las clasificaciones al recargar el archivo."
@@ -644,7 +645,7 @@ def segmentacion_app():
     # -----------------------------------------------------------------------
     st.subheader("Árbol de decisiones y editor de reglas")
     st.write(
-        "Selecciona los parámetros en el siguiente orden (especie → tipo/color/periodo → métrica) para ver y modificar las bandas de cada regla con un código de colores similar al flujograma. Los cambios se reflejan automáticamente en la tabla de reglas."  
+        "Selecciona los parámetros (tipo/color/periodo → métrica) para ver y modificar las bandas de cada regla con un código de colores similar al flujograma. Los cambios se reflejan automáticamente en la tabla de reglas."
     )
     # Mapa de colores para grupos 1–4 inspirado en el diagrama
     group_colors = {
@@ -653,7 +654,7 @@ def segmentacion_app():
         3: '#ffaaa5',  # coral
         4: '#ff8b94',  # rojo rosado
     }
-    especie_seleccion = st.selectbox("Selecciona la especie", ["Ciruela", "Nectarin"])
+    especie_seleccion = especie
     if especie_seleccion == "Ciruela":
         subtipo_sel = st.selectbox("Sub‑tipo de ciruela", list(current_plum_rules.keys()))
         metrica_sel = st.selectbox("Métrica", list(current_plum_rules[subtipo_sel].keys()))
@@ -1208,7 +1209,3 @@ def segmentacion_app():
             st.info("No se pudo leer el archivo cargado.")
     else:
         st.info("Esperando que subas un archivo para procesar...")
-
-
-if __name__ == "__main__":
-    segmentacion_app()
