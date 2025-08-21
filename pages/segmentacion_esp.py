@@ -678,7 +678,16 @@ def segmentacion_app():
         bandas_df = pd.DataFrame(bandas, columns=["Min", "Max", "Grupo"])
         def _apply_colors_plum(row):
             return [f"background-color: {group_colors.get(int(row['Grupo']), '')}" for _ in row]
-        st.write(bandas_df.style.apply(_apply_colors_plum, axis=1))
+        try:
+            st.write(bandas_df.style.apply(_apply_colors_plum, axis=1))
+        except AttributeError as e:
+            # pandas.DataFrame.style requires jinja2. If it's missing, fall back to
+            # displaying the table without styling and warn the user.
+            if "jinja2" in str(e).lower():
+                st.warning("Instala 'jinja2' para ver la tabla con colores.")
+                st.write(bandas_df)
+            else:
+                raise
         # Editor de bandas
         st.markdown("**Editar bandas**")
         nuevas_bandas = []
