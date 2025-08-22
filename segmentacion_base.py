@@ -385,9 +385,13 @@ def segmentacion_app(especie: str):
         # Permitir que el parámetro file sea un DataFrame ya cargado
         if isinstance(file, pd.DataFrame):
             df = file.copy()
+        else:
             df = pd.read_excel(
-                file, sheet_name=SHEET_NAME, usecols=USECOLS,
-                skiprows=START_ROW, dtype=str
+                file,
+                sheet_name=SHEET_NAME,
+                usecols=USECOLS,
+                skiprows=START_ROW,
+                dtype=str,
             )
         # 1) Filtros y renombres
         df = df[df[ESPECIE_COLUMN].isin(ESPECIES_VALIDAS)].copy()
@@ -794,6 +798,10 @@ def segmentacion_app(especie: str):
     # Detección de outliers antes del procesamiento
     # -------------------------------------------------------------------
     tmp_df = df_upload.copy()
+    # Filtrar por especie para evitar mezclar datasets
+    if ESPECIE_COLUMN in tmp_df.columns:
+        tmp_df = tmp_df[tmp_df[ESPECIE_COLUMN] == especie].copy()
+
     # Convertir fechas
     if DATE_COLUMN in tmp_df.columns:
         tmp_df[DATE_COLUMN] = tmp_df[DATE_COLUMN].apply(_safe_parse_date)
@@ -914,10 +922,14 @@ def segmentacion_app(especie: str):
             file_name="outliers.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+    else:
         st.info("No se detectaron outliers en los datos cargados.")
-    cols_to_edit = [c for c in tmp_df.columns if not c.startswith('Outlier_') and not c.startswith('Mean_')]
+
+    # Excluir outliers antes de la edición y procesamiento
+    df_no_outliers = tmp_df[~tmp_df["Outlier"]].copy()
+    cols_to_edit = [c for c in df_no_outliers.columns if not c.startswith('Outlier_') and not c.startswith('Mean_')]
     edited_df = st.data_editor(
-        tmp_df[cols_to_edit],
+        df_no_outliers[cols_to_edit],
         use_container_width=True,
         height=350,
         num_rows="dynamic",
