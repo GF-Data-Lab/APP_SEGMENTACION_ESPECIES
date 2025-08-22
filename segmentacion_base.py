@@ -1036,6 +1036,7 @@ def segmentacion_app(especie: str):
                   promedio_acidez=(COL_ACIDEZ, "mean"),
                   promedio_firmeza_punto=("Firmeza punto valor", "mean"),
                   promedio_mejillas=("avg_mejillas", "mean"),
+                  punto_firmeza_min=("Firmeza punto columna", "first"),
                   periodo_inconsistente=("periodo_inconsistente", "max"),
               )
               .reset_index()
@@ -1067,6 +1068,7 @@ def segmentacion_app(especie: str):
                   promedio_acidez=(COL_ACIDEZ, "mean"),
                   promedio_firmeza_punto=("Firmeza punto valor", "mean"),
                   promedio_mejillas=("avg_mejillas", "mean"),
+                  punto_firmeza_min=("Firmeza punto columna", "first"),
               )
               .reset_index()
           )
@@ -1136,6 +1138,7 @@ def segmentacion_app(especie: str):
           metric_groups = ['grp_brix', 'grp_mejillas', 'grp_firmeza_punto', 'grp_acidez']
           if cond_method == 'media':
               agg_groups['cond_sum_metric'] = agg_groups[metric_groups].mean(axis=1, skipna=True)
+          else:
               agg_groups['cond_sum_metric'] = agg_groups[metric_groups].sum(axis=1, min_count=1)
           # Calcular cluster basado en cond_sum_metric
           if agg_groups['cond_sum_metric'].notna().nunique() >= 4:
@@ -1149,6 +1152,15 @@ def segmentacion_app(especie: str):
           # Sustituir cluster_grp por el resultado basado en métricas agregadas
           agg_groups['cluster_grp'] = agg_groups['cluster_metric']
           agg_groups['cond_sum_grp'] = agg_groups['cond_sum_metric']
+
+          # Determinar el punto de firmeza más bajo por cluster y repetirlo
+          agg_groups['punto_firmeza_cluster'] = agg_groups['punto_firmeza_min']
+          for clus, grp in agg_groups.groupby('cluster_grp'):
+              if pd.isna(clus):
+                  continue
+              idx_min = grp['promedio_firmeza_punto'].idxmin()
+              weak_pt = agg_groups.loc[idx_min, 'punto_firmeza_min']
+              agg_groups.loc[agg_groups['cluster_grp'] == clus, 'punto_firmeza_cluster'] = weak_pt
 
           # Estilo para colorear según cluster
           def color_cluster(val):
