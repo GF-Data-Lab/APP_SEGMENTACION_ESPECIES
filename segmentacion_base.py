@@ -320,7 +320,7 @@ def segmentacion_app(especie: str):
     def _harvest_period_a(ts: pd.Timestamp | float | str) -> str:
         ts = pd.to_datetime(ts, errors="coerce")
         if pd.isna(ts):
-            return st.session_state.get("default_period", "sin_fecha")
+            return "tardia"
         m, d = ts.month, ts.day
         if (m, d) < (11, 22):
             return "muy_temprana"
@@ -333,7 +333,7 @@ def segmentacion_app(especie: str):
     def _harvest_period_b(ts: pd.Timestamp | float | str) -> str:
         ts = pd.to_datetime(ts, errors="coerce")
         if pd.isna(ts):
-            return st.session_state.get("default_period", "sin_fecha")
+            return "tardia"
         m, d = ts.month, ts.day
         if (m, d) < (11, 25):
             return "muy_temprana"
@@ -397,10 +397,15 @@ def segmentacion_app(especie: str):
         df = df[df[ESPECIE_COLUMN].isin(ESPECIES_VALIDAS)].copy()
         df.rename(columns={COL_ORIG_BRIX: COL_BRIX}, inplace=True)
         # Color de pulpa: reemplazar nulos por valor por defecto
-        default_color = st.session_state.get("default_color", "Amarilla")
+        default_color = "Amarilla"
         if COLOR_COLUMN not in df.columns:
-            df[COLOR_COLUMN] = default_color
-        df[COLOR_COLUMN] = df[COLOR_COLUMN].fillna(default_color)
+            df[COLOR_COLUMN] = np.nan
+        mask_nect = df[ESPECIE_COLUMN] == "Nectarin"
+        df.loc[mask_nect, COLOR_COLUMN] = (
+            df.loc[mask_nect, COLOR_COLUMN]
+            .replace("", np.nan)
+            .fillna(default_color)
+        )
         # 2) Tipos y periodos
         # Parsear fechas de manera robusta (dd-mm-aaaa o mm-dd-aaaa)
         df[DATE_COLUMN] = df[DATE_COLUMN].apply(_safe_parse_date)
@@ -414,7 +419,9 @@ def segmentacion_app(especie: str):
             color = str(df.at[i, COLOR_COLUMN]).strip().lower()
             if color.startswith("blanc"):
                 df.at[i, "harvest_period"] = _harvest_period_b(df.at[i, DATE_COLUMN])
+            else:
                 df.at[i, "harvest_period"] = _harvest_period_a(df.at[i, DATE_COLUMN])
+        df.loc[idx_nectar & (df["harvest_period"] == "sin_fecha"), "harvest_period"] = "tardia"
         # 3) Conversión a numérico
         _to_numeric(df, NUMERIC_COLS)
         # 3.1) Cálculo de la medida de mejillas: promedio de Mejilla 1 y 2 por fruto
@@ -500,8 +507,12 @@ def segmentacion_app(especie: str):
         df = df.merge(grp_cond, on=grp_keys, how="left")
         # Discretización de cond_sum_grp en 4 clusters
         if grp_cond["cond_sum_grp"].notna().nunique() >= 4:
-            bins = pd.qcut(grp_cond["cond_sum_grp"], 4, labels=[1,2,3,4])
-            bins = pd.cut(grp_cond["cond_sum_grp"], 4, labels=[1,2,3,4])
+            try:
+                bins = pd.qcut(grp_cond["cond_sum_grp"], 4, labels=[1,2,3,4])
+            except ValueError:
+                bins = pd.cut(grp_cond["cond_sum_grp"], 4, labels=[1,2,3,4])
+        else:
+            bins = pd.Series(np.nan, index=grp_cond.index)
         grp_cond["cluster_grp"] = bins
         df = df.merge(
             grp_cond[grp_keys + ["cluster_grp"]], on=grp_keys, how="left"
@@ -1021,8 +1032,12 @@ def segmentacion_app(especie: str):
           agg_groups["cond_sum_grp"] = cond_agg.values
           # Binning de clusters grupales para visualización
           if agg_groups["cond_sum_grp"].notna().nunique() >= 4:
-              bins = pd.qcut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
-              bins = pd.cut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
+              try:
+                  bins = pd.qcut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
+              except ValueError:
+                  bins = pd.cut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
+          else:
+              bins = pd.Series(np.nan, index=agg_groups.index)
           agg_groups["cluster_grp"] = bins
           # Calcular agregados por variedad (sin distinguir fruto ni periodo)
           if grp_method == "mean":
@@ -1046,8 +1061,12 @@ def segmentacion_app(especie: str):
           )
           agg_variedad["cond_sum_grp"] = cond_agg_var.values
           if agg_variedad["cond_sum_grp"].notna().nunique() >= 4:
-              bins_var = pd.qcut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
-              bins_var = pd.cut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
+              try:
+                  bins_var = pd.qcut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
+              except ValueError:
+                  bins_var = pd.cut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
+          else:
+              bins_var = pd.Series(np.nan, index=agg_variedad.index)
           agg_variedad["cluster_grp"] = bins_var
 
           # Clasificación agregada por métricas basándose en los promedios del grupo
@@ -1107,8 +1126,12 @@ def segmentacion_app(especie: str):
               agg_groups['cond_sum_metric'] = agg_groups[metric_groups].sum(axis=1, min_count=1)
           # Calcular cluster basado en cond_sum_metric
           if agg_groups['cond_sum_metric'].notna().nunique() >= 4:
-              bins_metric = pd.qcut(agg_groups['cond_sum_metric'], 4, labels=[1,2,3,4])
-              bins_metric = pd.cut(agg_groups['cond_sum_metric'], 4, labels=[1,2,3,4])
+              try:
+                  bins_metric = pd.qcut(agg_groups['cond_sum_metric'], 4, labels=[1,2,3,4])
+              except ValueError:
+                  bins_metric = pd.cut(agg_groups['cond_sum_metric'], 4, labels=[1,2,3,4])
+          else:
+              bins_metric = pd.Series(np.nan, index=agg_groups.index)
           agg_groups['cluster_metric'] = bins_metric
           # Sustituir cluster_grp por el resultado basado en métricas agregadas
           agg_groups['cluster_grp'] = agg_groups['cluster_metric']
