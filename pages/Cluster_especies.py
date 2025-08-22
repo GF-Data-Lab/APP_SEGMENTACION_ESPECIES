@@ -62,8 +62,8 @@ generarMenu()
 st.title("🧪 Modelo de Clasificación de Variedad")
 st.markdown(
     """
-    En esta página vamos a **entrenar** un clasificador para predecir la *Variedad* 
-    (por ejemplo, candy vs cherry) usando tus datos procesados de carozos.  
+    En esta página vamos a **entrenar** un clasificador para predecir la *Variedad*
+    (por ejemplo, candy vs sugar) usando tus datos procesados de carozos.
     Ajusta hiperparámetros, observa métricas y ¡que empiece la magia de la ML! ✨
     """
 )

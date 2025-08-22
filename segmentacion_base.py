@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Union, Sequence
 from collections.abc import Iterable
 import streamlit as st
+import unicodedata
 import io
 
 from utils import show_logo
@@ -98,7 +99,7 @@ def segmentacion_app(especie: str):
             "FIRMEZA_MEJ":   [(9.0,  np.inf, 1), (7.0,  9.0, 2), (6.0,  7.0, 3), (-np.inf, 6.0, 4)],
             COL_ACIDEZ:    [(-np.inf, 0.60, 1), (0.60, 0.81, 2), (0.81, 1.00, 3), (1.00, np.inf, 4)],
         },
-        "cherry": {
+        "sugar": {
             COL_BRIX:      [(21.0, np.inf, 1), (18.0, 21.0, 2), (15.0, 18.0, 3), (-np.inf, 15.0, 4)],
             "FIRMEZA_PUNTO": [(6.0, np.inf, 1), (4.5,  6.0, 2), (3.0,  4.5, 3), (-np.inf, 3.0, 4)],
             "FIRMEZA_MEJ":   [(8.0, np.inf, 1), (5.0,  8.0, 2), (4.0,  5.0, 3), (-np.inf, 4.0, 4)],
@@ -268,13 +269,13 @@ def segmentacion_app(especie: str):
         peso = _weight_value(row)
         if peso is None:
             # Si el peso falta utilizamos el valor por defecto
-            return st.session_state.get("default_plum_subtype", "cherry")
+            return st.session_state.get("default_plum_subtype", "sugar")
         # Lógica de clasificación configurable por el usuario
-        cherry_cut = st.session_state.get("cherry_upper", 60.0)
-        if peso > cherry_cut:
+        sugar_cut = st.session_state.get("sugar_upper", 60.0)
+        if peso > sugar_cut:
             return "candy"
-        # Cualquier ciruela con peso ≤ cherry_cut se considera cherry
-        return "cherry"
+        # Cualquier ciruela con peso ≤ sugar_cut se considera sugar
+        return "sugar"
 
     def _fpd_from_group(grp: pd.DataFrame) -> float | None:
         mean_vals = grp[COL_FIRMEZA_ALL].mean()
@@ -306,13 +307,18 @@ def segmentacion_app(especie: str):
     def _classify_row(row: pd.Series, col: str, rules_plum: Dict, rules_nect: Dict) -> float:
         key = _rule_key(col)
         if row[ESPECIE_COLUMN] == "Ciruela":
-            subtype = row.get("plum_subtype", "cherry")
+            subtype = row.get("plum_subtype", "sugar")
             rule_dict = rules_plum.get(subtype, {}).get(key, [])
             return _classify_value(row[col], rule_dict)
         if row[ESPECIE_COLUMN] == "Nectarin":
             color = str(row.get(COLOR_COLUMN, "")).strip().lower() or st.session_state.get("default_color", "amarilla")
             color = "blanca" if color.startswith("blanc") else "amarilla"
-            period = PERIOD_MAP.get(row.get("harvest_period", "sin_fecha"), "tardia")
+            raw_period = str(row.get("harvest_period", "")).strip().lower()
+            raw_period = unicodedata.normalize("NFD", raw_period).encode("ascii", "ignore").decode("utf-8")
+            period = PERIOD_MAP.get(
+                raw_period,
+                st.session_state.get("default_period", "tardia"),
+            )
             rule_dict = rules_nect.get(color, {}).get(period, {}).get(key, [])
             return _classify_value(row[col], rule_dict)
         return np.nan
@@ -421,7 +427,10 @@ def segmentacion_app(especie: str):
                 df.at[i, "harvest_period"] = _harvest_period_b(df.at[i, DATE_COLUMN])
             else:
                 df.at[i, "harvest_period"] = _harvest_period_a(df.at[i, DATE_COLUMN])
-        df.loc[idx_nectar & (df["harvest_period"] == "sin_fecha"), "harvest_period"] = "tardia"
+        df.loc[
+            idx_nectar & (df["harvest_period"] == "sin_fecha"),
+            "harvest_period",
+        ] = st.session_state.get("default_period", "tardia")
         # 3) Conversión a numérico
         _to_numeric(df, NUMERIC_COLS)
         # 3.1) Cálculo de la medida de mejillas: promedio de Mejilla 1 y 2 por fruto
@@ -566,9 +575,9 @@ def segmentacion_app(especie: str):
     st.subheader("Valores por defecto")
     # Inicializar session_state con defaults si no existen
     if "default_plum_subtype" not in st.session_state:
-        st.session_state["default_plum_subtype"] = "cherry"
-    if "cherry_upper" not in st.session_state:
-        st.session_state["cherry_upper"] = 60.0
+        st.session_state["default_plum_subtype"] = "sugar"
+    if "sugar_upper" not in st.session_state:
+        st.session_state["sugar_upper"] = 60.0
     if "default_color" not in st.session_state:
         st.session_state["default_color"] = "Amarilla"
     if "default_period" not in st.session_state:
@@ -577,17 +586,18 @@ def segmentacion_app(especie: str):
     if especie == "Ciruela":
         default_plum = st.selectbox(
             "Tipo de ciruela por defecto si el peso no está disponible",
-            options=["cherry", "candy"],
-            index=["cherry", "candy"].index(st.session_state["default_plum_subtype"]),
+            options=["sugar", "candy"],
+            index=["sugar", "candy"].index(st.session_state["default_plum_subtype"]),
             key="default_plum_subtype",
         )
-        st.session_state["cherry_upper"] = st.number_input(
-            "Peso máximo para cherry (g)",
+        st.session_state["sugar_upper"] = st.number_input(
+            "Peso máximo para sugar (g)",
             min_value=10.0,
             max_value=200.0,
-            value=float(st.session_state["cherry_upper"]),
+            value=float(st.session_state["sugar_upper"]),
             step=1.0,
         )
+    elif especie.lower().startswith("nect"):
         st.session_state["default_color"] = st.selectbox(
             "Color de pulpa por defecto para Nectarina (si falta)",
             options=["Amarilla", "Blanca"],
@@ -1001,8 +1011,9 @@ def segmentacion_app(especie: str):
               key="select_variedad"
           )
           if seleccion_var and seleccion_var != "Todas":
-              filtro = df_processed[df_processed[VAR_COLUMN] == seleccion_var]
-              filtro = df_processed
+            filtro = df_processed[df_processed[VAR_COLUMN] == seleccion_var]
+          else:
+            filtro = df_processed
           st.markdown(f"#### Resultados para la variedad: {seleccion_var}")
           st.dataframe(filtro, use_container_width=True, height=400)
           # Agregados por grupo (especie, variedad, fruto y periodo)
@@ -1075,7 +1086,7 @@ def segmentacion_app(especie: str):
           for key, grp in df_processed.groupby(group_cols):
               first_row = grp.iloc[0]
               group_info[key] = {
-                  'plum_subtype': first_row.get('plum_subtype', 'cherry'),
+                  'plum_subtype': first_row.get('plum_subtype', 'sugar'),
                   'color': str(first_row.get(COLOR_COLUMN, '')).strip().lower(),
               }
           # Clasificar cada métrica promedio
@@ -1084,38 +1095,40 @@ def segmentacion_app(especie: str):
           fpd_classes = []
           acid_classes = []
           for _, row in agg_groups.iterrows():
-              key = (row[ESPECIE_COLUMN], row[VAR_COLUMN], row[FRUTO_COLUMN], row['harvest_period'])
-              info = group_info.get(key, {})
-              especie = row[ESPECIE_COLUMN]
-              # Seleccionar reglas según especie
-              if especie == 'Ciruela':
-                  subtype = info.get('plum_subtype', 'cherry')
-                  rules_dict = current_plum_rules.get(subtype, {})
-                  # Determinar color base (amarilla o blanca)
-                  color_key = 'blanca' if info.get('color', 'amarilla').startswith('blanc') else 'amarilla'
-                  period_key = row['harvest_period']
-                  rules_dict = current_nect_rules.get(color_key, {}).get(period_key, {})
-              # Obtener reglas por métrica
-              rules_brix = rules_dict.get(COL_BRIX, [])
-              rules_mej = rules_dict.get('FIRMEZA_MEJ', [])
-              rules_fpd = rules_dict.get('FIRMEZA_PUNTO', [])
-              rules_acid = rules_dict.get(COL_ACIDEZ, [])
-              # Clasificación usando las reglas
-              brix_classes.append(_classify_value(row['promedio_brix'], rules_brix))
-              mej_classes.append(_classify_value(row['promedio_mejillas'], rules_mej))
-              fpd_classes.append(_classify_value(row['promedio_firmeza_punto'], rules_fpd))
-              # Para acidez, utilizar sólo el primer valor de la muestra si existe
-              # En el promedio de acidez ya se utilizó la media; si se desea tomar el primer valor,
-              # podemos tomar el primer valor de esa combinación en df_processed.
-              # Buscamos el primer valor real (no nulo) en df_processed para este grupo
-              df_group = df_processed[(df_processed[ESPECIE_COLUMN] == row[ESPECIE_COLUMN]) &
-                                     (df_processed[VAR_COLUMN] == row[VAR_COLUMN]) &
-                                     (df_processed[FRUTO_COLUMN] == row[FRUTO_COLUMN]) &
-                                     (df_processed['harvest_period'] == row['harvest_period'])]
-              first_acid = df_group[COL_ACIDEZ].dropna().iloc[0] if not df_group[COL_ACIDEZ].dropna().empty else row['promedio_acidez']
-              acid_classes.append(_classify_value(first_acid, rules_acid))
+            key = (row[ESPECIE_COLUMN], row[VAR_COLUMN], row[FRUTO_COLUMN], row['harvest_period'])
+            info = group_info.get(key, {})
+            especie = row[ESPECIE_COLUMN]
+            # Seleccionar reglas según especie
+            if especie == 'Ciruela':
+                subtype = info.get('plum_subtype', 'sugar')
+                rules_dict = current_plum_rules.get(subtype, {})
+            elif especie == 'Nectarin':
+                color_key = 'blanca' if info.get('color', 'amarilla').startswith('blanc') else 'amarilla'
+                period_key = row['harvest_period']
+                rules_dict = current_nect_rules.get(color_key, {}).get(period_key, {})
+            else:
+                rules_dict = {}
+            # Obtener reglas por métrica
+            rules_brix = rules_dict.get(COL_BRIX, [])
+            rules_mej = rules_dict.get('FIRMEZA_MEJ', [])
+            rules_fpd = rules_dict.get('FIRMEZA_PUNTO', [])
+            rules_acid = rules_dict.get(COL_ACIDEZ, [])
+            # Clasificación usando las reglas
+            brix_classes.append(_classify_value(row['promedio_brix'], rules_brix))
+            mej_classes.append(_classify_value(row['promedio_mejillas'], rules_mej))
+            fpd_classes.append(_classify_value(row['promedio_firmeza_punto'], rules_fpd))
+            # Para acidez, utilizar sólo el primer valor de la muestra si existe
+            # En el promedio de acidez ya se utilizó la media; si se desea tomar el primer valor,
+            # podemos tomar el primer valor de esa combinación en df_processed.
+            # Buscamos el primer valor real (no nulo) en df_processed para este grupo
+            df_group = df_processed[(df_processed[ESPECIE_COLUMN] == row[ESPECIE_COLUMN]) &
+                                   (df_processed[VAR_COLUMN] == row[VAR_COLUMN]) &
+                                   (df_processed[FRUTO_COLUMN] == row[FRUTO_COLUMN]) &
+                                   (df_processed['harvest_period'] == row['harvest_period'])]
+            first_acid = df_group[COL_ACIDEZ].dropna().iloc[0] if not df_group[COL_ACIDEZ].dropna().empty else row['promedio_acidez']
+            acid_classes.append(_classify_value(first_acid, rules_acid))
           # Añadir columnas de bandas por métrica
-          agg_groups['grp_brix'] = brix_classes
+          # Añadir columnas de bandas por métrica
           agg_groups['grp_mejillas'] = mej_classes
           agg_groups['grp_firmeza_punto'] = fpd_classes
           agg_groups['grp_acidez'] = acid_classes
