@@ -27,6 +27,7 @@ def generarMenu():
 
         # Crear los botones debajo del logo en la barra lateral
         boton_inicio = st.button('Página de Inicio 🏚️')
+        boton_carga = st.button('Carga de archivos 📁')
         boton_ciruela = st.button('Segmentación Ciruela 🍑')
         boton_nectarina = st.button('Segmentación Nectarina 🍑')
         boton_cluster = st.button('Modelo de Clasificación')
@@ -34,12 +35,14 @@ def generarMenu():
     # Acción de los botones: redirigir a la página correspondiente
     if boton_inicio:
         st.switch_page('app.py')  # Redirige a la página principal
+    if boton_carga:
+        st.switch_page('pages/carga_datos.py')
     if boton_ciruela:
         st.switch_page('pages/segmentacion_ciruela.py')
     if boton_nectarina:
         st.switch_page('pages/segmentacion_nectarina.py')
     if boton_cluster:
-        st.switch_page('pages/Cluster_especies.py')  
+        st.switch_page('pages/Cluster_especies.py')
     if boton_analisis:
         st.switch_page('pages/analisis.py')
 

@@ -245,7 +245,6 @@ def segmentacion_app(especie: str):
         for c in cols:
             if isinstance(c, Iterable) and not isinstance(c, (str, bytes)):
                 flat_cols.extend(c)
-            else:
                 flat_cols.append(c)
         for col in flat_cols:
             if col in group.columns:
@@ -386,7 +385,6 @@ def segmentacion_app(especie: str):
         # Permitir que el parámetro file sea un DataFrame ya cargado
         if isinstance(file, pd.DataFrame):
             df = file.copy()
-        else:
             df = pd.read_excel(
                 file, sheet_name=SHEET_NAME, usecols=USECOLS,
                 skiprows=START_ROW, dtype=str
@@ -412,7 +410,6 @@ def segmentacion_app(especie: str):
             color = str(df.at[i, COLOR_COLUMN]).strip().lower()
             if color.startswith("blanc"):
                 df.at[i, "harvest_period"] = _harvest_period_b(df.at[i, DATE_COLUMN])
-            else:
                 df.at[i, "harvest_period"] = _harvest_period_a(df.at[i, DATE_COLUMN])
         # 3) Conversión a numérico
         _to_numeric(df, NUMERIC_COLS)
@@ -428,7 +425,6 @@ def segmentacion_app(especie: str):
                 m = s.mode()
                 return m.iloc[0] if not m.empty else s.iloc[0]
             df["avg_mejillas"] = df.groupby(grp_keys_fp)["avg_mejillas"].transform(_mode_series)
-        else:
             # Media por fruto (ya calculada) se recalcula por claridad
             df["avg_mejillas"] = df.groupby(grp_keys_fp)["avg_mejillas"].transform('mean')
         # 3.2) Cálculo de la firmeza punto débil según variables seleccionadas
@@ -440,7 +436,6 @@ def segmentacion_app(especie: str):
             df["Firmeza punto valor"] = fpd_means.min(axis=1)
             # Registrar la columna que dio el mínimo
             df["Firmeza punto columna"] = fpd_means.idxmin(axis=1)
-        else:
             # Usar todas las variables físicas si no se especifican
             fpd_means = df.groupby(grp_keys_fp)[list(COL_FIRMEZA_ALL)].transform('mean')
             df["Firmeza punto valor"] = fpd_means.min(axis=1)
@@ -478,7 +473,6 @@ def segmentacion_app(especie: str):
         # Discretizar cond_sum en 4 clusters
         if df["cond_sum"].notna().nunique() >= 4:
             df["cluster_row"] = pd.qcut(df["cond_sum"], 4, labels=[1,2,3,4])
-        else:
             df["cluster_row"] = pd.cut(df["cond_sum"], 4, labels=[1,2,3,4])
         # 8) Cluster grupal (promedio)
         # 8) Cluster grupal (promedio o moda de cond_sum según grp_method)
@@ -503,7 +497,6 @@ def segmentacion_app(especie: str):
         # Discretización de cond_sum_grp en 4 clusters
         if grp_cond["cond_sum_grp"].notna().nunique() >= 4:
             bins = pd.qcut(grp_cond["cond_sum_grp"], 4, labels=[1,2,3,4])
-        else:
             bins = pd.cut(grp_cond["cond_sum_grp"], 4, labels=[1,2,3,4])
         grp_cond["cluster_grp"] = bins
         df = df.merge(
@@ -527,6 +520,8 @@ def segmentacion_app(especie: str):
             show_logo()
             if st.button('Página de Inicio 🏚️'):
                 st.switch_page('app.py')
+            if st.button('Carga de archivos 📁'):
+                st.switch_page('pages/carga_datos.py')
             if st.button('Segmentación Ciruela 🍑'):
                 st.switch_page('pages/segmentacion_ciruela.py')
             if st.button('Segmentación Nectarina 🍑'):
@@ -542,7 +537,8 @@ def segmentacion_app(especie: str):
     st.title(f"🛠️ Segmentación {titulo_especie}")
     st.write(
         """
-        Sube tu archivo Excel `MAESTRO CAROZOS FINAL COMPLETO CG.xlsx` y obtén los clusters,
+        Asegúrate de haber cargado previamente el archivo Excel correspondiente en la página
+        "Carga de archivos" para obtener los clusters,
         clasificaciones y resultados procesados según el flujograma.  Además,
         puedes visualizar y editar las reglas de segmentación y definir valores
         por defecto para campos faltantes.
@@ -577,7 +573,6 @@ def segmentacion_app(especie: str):
             value=float(st.session_state["cherry_upper"]),
             step=1.0,
         )
-    else:
         st.session_state["default_color"] = st.selectbox(
             "Color de pulpa por defecto para Nectarina (si falta)",
             options=["Amarilla", "Blanca"],
@@ -670,9 +665,7 @@ def segmentacion_app(especie: str):
                         # Actualizar DataFrame
                         st.session_state["plum_rules_df"] = plum_rules_to_df(current_plum_rules)
                         st.success(f"Métrica '{nueva_metric}' añadida.")
-                    else:
                         st.warning("La métrica ya existe.")
-                else:
                     st.warning("Debes introducir un nombre para la nueva métrica.")
         bandas = current_plum_rules[subtipo_sel][metrica_sel]
         # Mostrar bandas con colores
@@ -687,7 +680,6 @@ def segmentacion_app(especie: str):
             if "jinja2" in str(e).lower():
                 st.warning("Instala 'jinja2' para ver la tabla con colores.")
                 st.write(bandas_df)
-            else:
                 raise
         # Editor de bandas
         st.markdown("**Editar bandas**")
@@ -743,9 +735,7 @@ def segmentacion_app(especie: str):
                         current_nect_rules[color_sel][periodo_sel][nueva_metric_n] = default_bands_n
                         st.session_state["nect_rules_df"] = nect_rules_to_df(current_nect_rules)
                         st.success(f"Métrica '{nueva_metric_n}' añadida.")
-                    else:
                         st.warning("La métrica ya existe.")
-                else:
                     st.warning("Debes introducir un nombre para la nueva métrica.")
         bandas_n = current_nect_rules[color_sel][periodo_sel][metrica_sel_n]
         # Mostrar bandas con colores
@@ -787,425 +777,404 @@ def segmentacion_app(especie: str):
             st.success("Regla actualizada para nectarin.")
 
     # -----------------------------------------------------------------------
-    # Subida y procesamiento del archivo
+    # Obtención del archivo cargado previamente
     # -----------------------------------------------------------------------
-    uploaded = st.file_uploader(
-        "Selecciona tu archivo Excel",
-        type=["xls", "xlsx"],
-        help="Debes incluir la hoja 'CAROZOS' con las columnas A:AP."
-    )
-    if uploaded:
-        # -------------------------------------------------------------------
-        # Lectura del archivo y detección de outliers antes del procesamiento
-        # -------------------------------------------------------------------
-        try:
-            if isinstance(uploaded, pd.DataFrame):
-                df_upload = uploaded.copy()
-            else:
-                df_upload = pd.read_excel(uploaded, sheet_name=SHEET_NAME, usecols=USECOLS, skiprows=START_ROW, dtype=str)
-        except Exception as e:
-            st.error(f"Error al leer el archivo: {e}")
-            df_upload = None
-        if df_upload is not None:
-            # Convertir columnas numéricas a numérico y calcular harvest_period para una detección más granular de outliers
-            tmp_df = df_upload.copy()
-            # Convertir fechas
-            if DATE_COLUMN in tmp_df.columns:
-                # Parsear fechas utilizando el mismo método robusto de la función principal
-                tmp_df[DATE_COLUMN] = tmp_df[DATE_COLUMN].apply(_safe_parse_date)
-                # Asignar periodo para cada registro (utilizando funciones de cosecha)
-                periods = []
-                for idx, row in tmp_df.iterrows():
-                    especie = row.get(ESPECIE_COLUMN)
-                    color = str(row.get(COLOR_COLUMN, '')).strip().lower()
-                    if especie == 'Nectarin':
-                        if color.startswith('blanc'):
-                            periods.append(_harvest_period_b(row[DATE_COLUMN]))
-                        else:
-                            periods.append(_harvest_period_a(row[DATE_COLUMN]))
-                    else:
-                        periods.append('sin_fecha')
-                tmp_df['harvest_period'] = periods
-            else:
-                tmp_df['harvest_period'] = 'sin_fecha'
-            _to_numeric(tmp_df, NUMERIC_COLS)
-            # Detección de outliers por especie, variedad, muestra y periodo (|z| > 2)
-            outlier_flags = pd.Series(False, index=tmp_df.index)
-            outlier_cols = {col: pd.Series(False, index=tmp_df.index) for col in NUMERIC_COLS if col in tmp_df.columns}
-            group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period']
-            for col in [c for c in NUMERIC_COLS if c in tmp_df.columns]:
-                for _, group_df in tmp_df.groupby(group_cols, dropna=False):
-                    serie = group_df[col].astype(float)
-                    if serie.empty:
-                        continue
-                    m = serie.mean()
-                    s = serie.std()
-                    if s == 0 or pd.isna(s):
-                        continue
-                    z = (serie - m) / s
-                    mask = (z.abs() > 2)
-                    outlier_flags.loc[group_df.index] = outlier_flags.loc[group_df.index] | mask
-                    outlier_cols[col].loc[group_df.index] = outlier_cols[col].loc[group_df.index] | mask
-            tmp_df['Outlier'] = outlier_flags
-            # Registrar para cada columna si es outlier (columna de marcas)
-            for col, flags in outlier_cols.items():
-                tmp_df[f'Outlier_{col}'] = flags
-            st.markdown("### Previsualización y edición del archivo cargado")
-            st.write("Se detectan outliers por especie, variedad, muestra y periodo usando ±2 desviaciones estándar. Las celdas marcadas en rojo indican outliers.")
-            # Construir tabla de outliers con media de grupo para cada métrica
-            outlier_rows = []
-            # Calcular medias de grupo para cada columna numérica
-            group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period']
-            group_means = {}
-            for col in [c for c in NUMERIC_COLS if c in tmp_df.columns]:
-                group_means[col] = tmp_df.groupby(group_cols)[col].transform('mean')
-                tmp_df[f'Mean_{col}'] = group_means[col]
-                # crear fila por outlier
-                flagged = tmp_df[tmp_df.get(f'Outlier_{col}', False)]
-                for idx, r in flagged.iterrows():
-                    outlier_rows.append({
-                        'index': idx,
-                        'Especie': r[ESPECIE_COLUMN],
-                        'Variedad': r[VAR_COLUMN],
-                        'Fruto': r[FRUTO_COLUMN],
-                        'Periodo': r['harvest_period'],
-                        'Métrica': col,
-                        'Valor': r[col],
-                        'Media_grupo': r[f'Mean_{col}'],
-                        'Diferencia': r[col] - r[f'Mean_{col}'],
-                    })
-            if outlier_rows:
-                df_out_table = pd.DataFrame(outlier_rows)
-                st.info(f"Se detectaron {len(df_out_table)} valores outlier.")
-                # Filtros para especie, variedad y periodo
-                esp_options = ['Todas'] + sorted(df_out_table['Especie'].dropna().unique())
-                esp_sel = st.selectbox("Filtrar por especie", options=esp_options, key="filtro_out_especie")
-                var_options = ['Todas'] + sorted(df_out_table['Variedad'].dropna().unique())
-                var_sel = st.selectbox("Filtrar por variedad", options=var_options, key="filtro_out_variedad")
-                per_options = ['Todas'] + sorted(df_out_table['Periodo'].dropna().unique())
-                per_sel = st.selectbox("Filtrar por periodo", options=per_options, key="filtro_out_periodo")
-                df_filt = df_out_table.copy()
-                if esp_sel != 'Todas':
-                    df_filt = df_filt[df_filt['Especie'] == esp_sel]
-                if var_sel != 'Todas':
-                    df_filt = df_filt[df_filt['Variedad'] == var_sel]
-                if per_sel != 'Todas':
-                    df_filt = df_filt[df_filt['Periodo'] == per_sel]
-                # Editor para modificar sólo la columna Valor
-                edited_outliers = st.data_editor(
-                    df_filt,
-                    use_container_width=True,
-                    height=350,
-                    num_rows="dynamic",
-                    column_config={
-                        'Valor': {'editable': True},
-                        'Media_grupo': {'editable': False},
-                        'Diferencia': {'editable': False},
-                        'index': {'editable': False},
-                        'Especie': {'editable': False},
-                        'Variedad': {'editable': False},
-                        'Fruto': {'editable': False},
-                        'Periodo': {'editable': False},
-                        'Métrica': {'editable': False},
-                    },
-                    key="outliers_editor"
-                )
-                # Botón para guardar cambios en outliers
-                if st.button("Aplicar cambios a los outliers"):
-                    # Actualizar tmp_df con los valores editados
-                    for _, row in edited_outliers.iterrows():
-                        idx = int(row['index'])
-                        col = row['Métrica']
-                        val = row['Valor']
-                        tmp_df.at[idx, col] = val
-                    st.success("Se actualizaron los valores de outliers en el dataset.")
-                # Descargar tabla de outliers
-                out_buffer = io.BytesIO()
-                with pd.ExcelWriter(out_buffer, engine='xlsxwriter') as writer:
-                    edited_outliers.to_excel(writer, index=False, sheet_name='Outliers')
-                out_buffer.seek(0)
-                st.download_button(
-                    label="📥 Descargar tabla de outliers",
-                    data=out_buffer.getvalue(),
-                    file_name="outliers.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            else:
-                st.info("No se detectaron outliers en los datos cargados.")
-            # Editor interactivo: sólo las columnas originales (sin columnas Outlier_*, Mean_*)
-            cols_to_edit = [c for c in tmp_df.columns if not c.startswith('Outlier_') and not c.startswith('Mean_')]
-            edited_df = st.data_editor(
-                tmp_df[cols_to_edit],
-                use_container_width=True,
-                height=350,
-                num_rows="dynamic",
-                key="uploaded_editor"
-            )
-            st.info("Si modificas valores en la tabla anterior, se usarán para el procesamiento.")
-            # Botón para descargar el archivo editado
-            excel_buffer = io.BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                edited_df.to_excel(writer, index=False, sheet_name='Datos_editados')
-            excel_buffer.seek(0)
-            st.download_button(
-                label="💾 Descargar Excel editado",
-                data=excel_buffer.getvalue(),
-                file_name="carozos_editado.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            # Configuración de cálculo para cond_sum y cluster grupal
-            st.subheader("Configuración de cálculo de clusters")
-            col_conf1, col_conf2 = st.columns(2)
-            with col_conf1:
-                cond_method = st.selectbox(
-                    "Método de cálculo de cond_sum",
-                    options=["suma", "media"],
-                    key="cond_sum_method"
-                )
-            with col_conf2:
-                grp_method = st.selectbox(
-                    "Método de agregación para cluster grupal",
-                    options=["mean", "mode"],
-                    key="cluster_grp_method"
-                )
-            if st.button("Procesar datos editados y clasificar"):
-                # Procesar utilizando el DataFrame editado
-                try:
-                    df_processed = process_carozos(
-                        edited_df,
-                        current_plum_rules,
-                        current_nect_rules,
-                        cond_method,
-                        grp_method,
-                        fpd_vars=st.session_state.get("fpd_vars"),
-                        mejillas_method=st.session_state.get("mejillas_method"),
-                    )
-                except Exception as e:
-                    st.error(f"Error al procesar el archivo: {e}")
-                    df_processed = None
-                if df_processed is not None:
-                    st.success("¡Procesamiento completado con éxito! 🎉")
-                    # Visualización de la tabla completa con posibilidad de filtrar por variedad
-                    st.markdown("### Tabla completa de resultados")
-                    st.dataframe(df_processed, use_container_width=True)
-                    # Selección de variedad para visualizar en detalle
-                    variedades = sorted(df_processed[VAR_COLUMN].dropna().unique())
-                    seleccion_var = st.selectbox(
-                        "Selecciona una variedad para visualizar sus resultados",
-                        options=["Todas"] + variedades,
-                        key="select_variedad"
-                    )
-                    if seleccion_var and seleccion_var != "Todas":
-                        filtro = df_processed[df_processed[VAR_COLUMN] == seleccion_var]
-                    else:
-                        filtro = df_processed
-                    st.markdown(f"#### Resultados para la variedad: {seleccion_var}")
-                    st.dataframe(filtro, use_container_width=True, height=400)
-                    # Agregados por grupo (especie, variedad, fruto y periodo)
-                    st.markdown("### Agregados por combinación de especie, variedad, fruto y periodo")
-                    group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period']
-                    # Cálculo de promedios de cond_sum y otros indicadores por grupo
-                    if grp_method == "mean":
-                        cond_agg = df_processed.groupby(group_cols, dropna=False)["cond_sum"].mean()
-                    else:
-                        def _agg_mode(s):
-                            m = s.mode()
-                            return m.iloc[0] if not m.empty else np.nan
-                        cond_agg = df_processed.groupby(group_cols, dropna=False)["cond_sum"].agg(_agg_mode)
-                    agg_groups = (
-                        df_processed
-                        .groupby(group_cols, dropna=False)
-                        .agg(
-                            muestras=("cond_sum", "size"),
-                            promedio_cond_sum=("cond_sum", "mean"),
-                            promedio_brix=(COL_BRIX, "mean"),
-                            promedio_acidez=(COL_ACIDEZ, "mean"),
-                            promedio_firmeza_punto=("Firmeza punto valor", "mean"),
-                            promedio_mejillas=("avg_mejillas", "mean"),
-                            periodo_inconsistente=("periodo_inconsistente", "max"),
-                        )
-                        .reset_index()
-                    )
-                    agg_groups["cond_sum_grp"] = cond_agg.values
-                    # Binning de clusters grupales para visualización
-                    if agg_groups["cond_sum_grp"].notna().nunique() >= 4:
-                        bins = pd.qcut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
-                    else:
-                        bins = pd.cut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
-                    agg_groups["cluster_grp"] = bins
-                    # Calcular agregados por variedad (sin distinguir fruto ni periodo)
-                    if grp_method == "mean":
-                        cond_agg_var = df_processed.groupby(VAR_COLUMN, dropna=False)["cond_sum"].mean()
-                    else:
-                        def _agg_mode_var(s):
-                            m = s.mode()
-                            return m.iloc[0] if not m.empty else np.nan
-                        cond_agg_var = df_processed.groupby(VAR_COLUMN, dropna=False)["cond_sum"].agg(_agg_mode_var)
-                    agg_variedad = (
-                        df_processed
-                        .groupby(VAR_COLUMN, dropna=False)
-                        .agg(
-                            muestras=("cond_sum", "size"),
-                            promedio_cond_sum=("cond_sum", "mean"),
-                            promedio_brix=(COL_BRIX, "mean"),
-                            promedio_acidez=(COL_ACIDEZ, "mean"),
-                            promedio_firmeza_punto=("Firmeza punto valor", "mean"),
-                            promedio_mejillas=("avg_mejillas", "mean"),
-                        )
-                        .reset_index()
-                    )
-                    agg_variedad["cond_sum_grp"] = cond_agg_var.values
-                    if agg_variedad["cond_sum_grp"].notna().nunique() >= 4:
-                        bins_var = pd.qcut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
-                    else:
-                        bins_var = pd.cut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
-                    agg_variedad["cluster_grp"] = bins_var
-
-                    # Clasificación agregada por métricas basándose en los promedios del grupo
-                    # Construir un mapa con información de sub‑tipo y color para cada grupo
-                    group_info = {}
-                    for key, grp in df_processed.groupby(group_cols):
-                        first_row = grp.iloc[0]
-                        group_info[key] = {
-                            'plum_subtype': first_row.get('plum_subtype', 'cherry'),
-                            'color': str(first_row.get(COLOR_COLUMN, '')).strip().lower(),
-                        }
-                    # Clasificar cada métrica promedio
-                    brix_classes = []
-                    mej_classes = []
-                    fpd_classes = []
-                    acid_classes = []
-                    for _, row in agg_groups.iterrows():
-                        key = (row[ESPECIE_COLUMN], row[VAR_COLUMN], row[FRUTO_COLUMN], row['harvest_period'])
-                        info = group_info.get(key, {})
-                        especie = row[ESPECIE_COLUMN]
-                        # Seleccionar reglas según especie
-                        if especie == 'Ciruela':
-                            subtype = info.get('plum_subtype', 'cherry')
-                            rules_dict = current_plum_rules.get(subtype, {})
-                        else:
-                            # Determinar color base (amarilla o blanca)
-                            color_key = 'blanca' if info.get('color', 'amarilla').startswith('blanc') else 'amarilla'
-                            period_key = row['harvest_period']
-                            rules_dict = current_nect_rules.get(color_key, {}).get(period_key, {})
-                        # Obtener reglas por métrica
-                        rules_brix = rules_dict.get(COL_BRIX, [])
-                        rules_mej = rules_dict.get('FIRMEZA_MEJ', [])
-                        rules_fpd = rules_dict.get('FIRMEZA_PUNTO', [])
-                        rules_acid = rules_dict.get(COL_ACIDEZ, [])
-                        # Clasificación usando las reglas
-                        brix_classes.append(_classify_value(row['promedio_brix'], rules_brix))
-                        mej_classes.append(_classify_value(row['promedio_mejillas'], rules_mej))
-                        fpd_classes.append(_classify_value(row['promedio_firmeza_punto'], rules_fpd))
-                        # Para acidez, utilizar sólo el primer valor de la muestra si existe
-                        # En el promedio de acidez ya se utilizó la media; si se desea tomar el primer valor,
-                        # podemos tomar el primer valor de esa combinación en df_processed.
-                        # Buscamos el primer valor real (no nulo) en df_processed para este grupo
-                        df_group = df_processed[(df_processed[ESPECIE_COLUMN] == row[ESPECIE_COLUMN]) &
-                                               (df_processed[VAR_COLUMN] == row[VAR_COLUMN]) &
-                                               (df_processed[FRUTO_COLUMN] == row[FRUTO_COLUMN]) &
-                                               (df_processed['harvest_period'] == row['harvest_period'])]
-                        first_acid = df_group[COL_ACIDEZ].dropna().iloc[0] if not df_group[COL_ACIDEZ].dropna().empty else row['promedio_acidez']
-                        acid_classes.append(_classify_value(first_acid, rules_acid))
-                    # Añadir columnas de bandas por métrica
-                    agg_groups['grp_brix'] = brix_classes
-                    agg_groups['grp_mejillas'] = mej_classes
-                    agg_groups['grp_firmeza_punto'] = fpd_classes
-                    agg_groups['grp_acidez'] = acid_classes
-                    # Recalcular cond_sum a nivel de grupo con estas bandas
-                    metric_groups = ['grp_brix', 'grp_mejillas', 'grp_firmeza_punto', 'grp_acidez']
-                    if cond_method == 'media':
-                        agg_groups['cond_sum_metric'] = agg_groups[metric_groups].mean(axis=1, skipna=True)
-                    else:
-                        agg_groups['cond_sum_metric'] = agg_groups[metric_groups].sum(axis=1, min_count=1)
-                    # Calcular cluster basado en cond_sum_metric
-                    if agg_groups['cond_sum_metric'].notna().nunique() >= 4:
-                        bins_metric = pd.qcut(agg_groups['cond_sum_metric'], 4, labels=[1,2,3,4])
-                    else:
-                        bins_metric = pd.cut(agg_groups['cond_sum_metric'], 4, labels=[1,2,3,4])
-                    agg_groups['cluster_metric'] = bins_metric
-                    # Sustituir cluster_grp por el resultado basado en métricas agregadas
-                    agg_groups['cluster_grp'] = agg_groups['cluster_metric']
-                    agg_groups['cond_sum_grp'] = agg_groups['cond_sum_metric']
-
-                    # Estilo para colorear según cluster
-                    def color_cluster(val):
-                        try:
-                            grp = int(val)
-                            return f"background-color: {group_colors.get(grp, '')}"
-                        except:
-                            return ''
-                    def highlight_inconsistent(row):
-                        """Devuelve estilos CSS para filas con periodos inconsistentes."""
-                        if row.get('periodo_inconsistente'):
-                            return ['background-color: #ffd6d6;' for _ in row]
-                        else:
-                            return ['' for _ in row]
-                    styled_agg = (
-                        agg_groups.style
-                        .applymap(color_cluster, subset=["cluster_grp"])
-                        .apply(highlight_inconsistent, axis=1)
-                    )
-                    st.dataframe(styled_agg, use_container_width=True, height=400)
-
-                    # Gráfico de las combinaciones en dos dimensiones (PCA)
-                    st.markdown("#### Distribución PCA de los grupos")
-                    try:
-                        # Importaciones necesarias para el gráfico PCA
-                        from sklearn.preprocessing import StandardScaler
-                        from sklearn.decomposition import PCA
-                        import altair as alt
-                        # Seleccionamos las características numéricas para el análisis
-                        pca_features = [
-                            "promedio_cond_sum",
-                            "promedio_brix",
-                            "promedio_acidez",
-                            "promedio_firmeza_punto",
-                            "promedio_mejillas",
-                        ]
-                        df_features = agg_groups[pca_features].fillna(0)
-                        # Normalizamos
-                        scaler = StandardScaler()
-                        X_scaled = scaler.fit_transform(df_features)
-                        pca = PCA(n_components=2)
-                        pcs = pca.fit_transform(X_scaled)
-                        agg_groups["PC1"] = pcs[:, 0]
-                        agg_groups["PC2"] = pcs[:, 1]
-                        # Construir gráfico interactivo con Altair
-                        color_scale = alt.Scale(domain=[1,2,3,4], range=[group_colors[1], group_colors[2], group_colors[3], group_colors[4]])
-                        chart = (
-                            alt.Chart(agg_groups)
-                            .mark_circle(size=80)
-                            .encode(
-                                x=alt.X("PC1", title="Componente principal 1"),
-                                y=alt.Y("PC2", title="Componente principal 2"),
-                                color=alt.Color("cluster_grp:N", scale=color_scale, legend=alt.Legend(title="Cluster")),
-                                tooltip=[ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period', 'cluster_grp', 'promedio_acidez']
-                            )
-                            .properties(width='container', height=400)
-                            .interactive()
-                        )
-                        st.altair_chart(chart, use_container_width=True)
-                    except Exception as e:
-                        st.info(f"No fue posible generar el gráfico PCA: {e}")
-
-                    # Mostrar agregados por variedad (sin separar fruto ni periodo)
-                    st.markdown("### Agregados por variedad")
-                    st.dataframe(agg_variedad, use_container_width=True, height=300)
-                    # Botón para descargar resultados completos y agregados
-                    buf = io.BytesIO()
-                    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-                        df_processed.to_excel(writer, index=False, sheet_name='Carozos')
-                        agg_groups.to_excel(writer, index=False, sheet_name='Agregados_grupo')
-                        agg_variedad.to_excel(writer, index=False, sheet_name='Agregados_variedad')
-                    buf.seek(0)
-                    st.download_button(
-                        label="📥 Descargar resultados como Excel",
-                        data=buf.getvalue(),
-                        file_name="carozos_procesados.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-        else:
-            st.info("No se pudo leer el archivo cargado.")
+    if especie in ("Nectarin", "Ciruela"):
+        df_upload = st.session_state.get("carozos_df")
+        file_label = "carozos"
     else:
-        st.info("Esperando que subas un archivo para procesar...")
+        df_upload = st.session_state.get("cerezas_df")
+        file_label = "cerezas"
+
+    if df_upload is None:
+        st.info(f"No se encontró el archivo de {file_label}. Primero súbelo en la página 'Carga de archivos'.")
+        return
+
+    # -------------------------------------------------------------------
+    # Detección de outliers antes del procesamiento
+    # -------------------------------------------------------------------
+    tmp_df = df_upload.copy()
+    # Convertir fechas
+    if DATE_COLUMN in tmp_df.columns:
+        tmp_df[DATE_COLUMN] = tmp_df[DATE_COLUMN].apply(_safe_parse_date)
+        # Asignar periodo para cada registro (utilizando funciones de cosecha)
+        periods = []
+        for idx, row in tmp_df.iterrows():
+            especie_row = row.get(ESPECIE_COLUMN)
+            color = str(row.get(COLOR_COLUMN, "")).strip().lower()
+            if especie_row == "Nectarin":
+                if color.startswith("blanc"):
+                    periods.append(_harvest_period_b(row[DATE_COLUMN]))
+                else:
+                    periods.append(_harvest_period_a(row[DATE_COLUMN]))
+            else:
+                periods.append("sin_fecha")
+        tmp_df["harvest_period"] = periods
+    else:
+        tmp_df["harvest_period"] = "sin_fecha"
+    _to_numeric(tmp_df, NUMERIC_COLS)
+    # Detección de outliers por especie, variedad, muestra y periodo (|z| > 2)
+    outlier_flags = pd.Series(False, index=tmp_df.index)
+    outlier_cols = {col: pd.Series(False, index=tmp_df.index) for col in NUMERIC_COLS if col in tmp_df.columns}
+    group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, "harvest_period"]
+    for col in [c for c in NUMERIC_COLS if c in tmp_df.columns]:
+        for _, group_df in tmp_df.groupby(group_cols, dropna=False):
+            serie = group_df[col].astype(float)
+            if serie.empty:
+                continue
+            m = serie.mean()
+            s = serie.std()
+            if s == 0 or pd.isna(s):
+                continue
+            z = (serie - m) / s
+            mask = (z.abs() > 2)
+            outlier_flags.loc[group_df.index] = outlier_flags.loc[group_df.index] | mask
+            outlier_cols[col].loc[group_df.index] = outlier_cols[col].loc[group_df.index] | mask
+    tmp_df["Outlier"] = outlier_flags
+    # Registrar para cada columna si es outlier (columna de marcas)
+    for col, flags in outlier_cols.items():
+        tmp_df[f"Outlier_{col}"] = flags
+    st.markdown("### Previsualización y edición del archivo cargado")
+    st.write("Se detectan outliers por especie, variedad, muestra y periodo usando ±2 desviaciones estándar. Las celdas marcadas en rojo indican outliers.")
+    # Construir tabla de outliers con media de grupo para cada métrica
+    outlier_rows = []
+    # Calcular medias de grupo para cada columna numérica
+    group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period']
+    group_means = {}
+    for col in [c for c in NUMERIC_COLS if c in tmp_df.columns]:
+        group_means[col] = tmp_df.groupby(group_cols)[col].transform('mean')
+        tmp_df[f'Mean_{col}'] = group_means[col]
+        # crear fila por outlier
+        flagged = tmp_df[tmp_df.get(f'Outlier_{col}', False)]
+        for idx, r in flagged.iterrows():
+            outlier_rows.append({
+                'index': idx,
+                'Especie': r[ESPECIE_COLUMN],
+                'Variedad': r[VAR_COLUMN],
+                'Fruto': r[FRUTO_COLUMN],
+                'Periodo': r['harvest_period'],
+                'Métrica': col,
+                'Valor': r[col],
+                'Media_grupo': r[f'Mean_{col}'],
+                'Diferencia': r[col] - r[f'Mean_{col}'],
+            })
+    if outlier_rows:
+        df_out_table = pd.DataFrame(outlier_rows)
+        st.info(f"Se detectaron {len(df_out_table)} valores outlier.")
+        # Filtros para especie, variedad y periodo
+        esp_options = ['Todas'] + sorted(df_out_table['Especie'].dropna().unique())
+        esp_sel = st.selectbox("Filtrar por especie", options=esp_options, key="filtro_out_especie")
+        var_options = ['Todas'] + sorted(df_out_table['Variedad'].dropna().unique())
+        var_sel = st.selectbox("Filtrar por variedad", options=var_options, key="filtro_out_variedad")
+        per_options = ['Todas'] + sorted(df_out_table['Periodo'].dropna().unique())
+        per_sel = st.selectbox("Filtrar por periodo", options=per_options, key="filtro_out_periodo")
+        df_filt = df_out_table.copy()
+        if esp_sel != 'Todas':
+            df_filt = df_filt[df_filt['Especie'] == esp_sel]
+        if var_sel != 'Todas':
+            df_filt = df_filt[df_filt['Variedad'] == var_sel]
+        if per_sel != 'Todas':
+            df_filt = df_filt[df_filt['Periodo'] == per_sel]
+        # Editor para modificar sólo la columna Valor
+        edited_outliers = st.data_editor(
+            df_filt,
+            use_container_width=True,
+            height=350,
+            num_rows="dynamic",
+            column_config={
+                'Valor': {'editable': True},
+                'Media_grupo': {'editable': False},
+                'Diferencia': {'editable': False},
+                'index': {'editable': False},
+                'Especie': {'editable': False},
+                'Variedad': {'editable': False},
+                'Fruto': {'editable': False},
+                'Periodo': {'editable': False},
+                'Métrica': {'editable': False},
+            },
+            key="outliers_editor",
+        )
+        # Botón para guardar cambios en outliers
+        if st.button("Aplicar cambios a los outliers"):
+            # Actualizar tmp_df con los valores editados
+            for _, row in edited_outliers.iterrows():
+                idx = int(row['index'])
+                col = row['Métrica']
+                val = row['Valor']
+                tmp_df.at[idx, col] = val
+            st.success("Se actualizaron los valores de outliers en el dataset.")
+        # Descargar tabla de outliers
+        out_buffer = io.BytesIO()
+        with pd.ExcelWriter(out_buffer, engine='xlsxwriter') as writer:
+            edited_outliers.to_excel(writer, index=False, sheet_name='Outliers')
+        out_buffer.seek(0)
+        st.download_button(
+            label="📥 Descargar tabla de outliers",
+            data=out_buffer.getvalue(),
+            file_name="outliers.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        st.info("No se detectaron outliers en los datos cargados.")
+    cols_to_edit = [c for c in tmp_df.columns if not c.startswith('Outlier_') and not c.startswith('Mean_')]
+    edited_df = st.data_editor(
+        tmp_df[cols_to_edit],
+        use_container_width=True,
+        height=350,
+        num_rows="dynamic",
+        key="uploaded_editor"
+    )
+    st.info("Si modificas valores en la tabla anterior, se usarán para el procesamiento.")
+    # Botón para descargar el archivo editado
+    excel_buffer = io.BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+        edited_df.to_excel(writer, index=False, sheet_name='Datos_editados')
+    excel_buffer.seek(0)
+    st.download_button(
+        label="💾 Descargar Excel editado",
+        data=excel_buffer.getvalue(),
+        file_name="carozos_editado.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    # Configuración de cálculo para cond_sum y cluster grupal
+    st.subheader("Configuración de cálculo de clusters")
+    col_conf1, col_conf2 = st.columns(2)
+    with col_conf1:
+        cond_method = st.selectbox(
+          "Método de cálculo de cond_sum",
+          options=["suma", "media"],
+          key="cond_sum_method"
+        )
+    with col_conf2:
+        grp_method = st.selectbox(
+          "Método de agregación para cluster grupal",
+          options=["mean", "mode"],
+          key="cluster_grp_method"
+        )
+    if st.button("Procesar datos editados y clasificar"):
+        # Procesar utilizando el DataFrame editado
+        try:
+          df_processed = process_carozos(
+              edited_df,
+              current_plum_rules,
+              current_nect_rules,
+              cond_method,
+              grp_method,
+              fpd_vars=st.session_state.get("fpd_vars"),
+              mejillas_method=st.session_state.get("mejillas_method"),
+          )
+        except Exception as e:
+          st.error(f"Error al procesar el archivo: {e}")
+          df_processed = None
+        if df_processed is not None:
+          st.success("¡Procesamiento completado con éxito! 🎉")
+          # Visualización de la tabla completa con posibilidad de filtrar por variedad
+          st.markdown("### Tabla completa de resultados")
+          st.dataframe(df_processed, use_container_width=True)
+          # Selección de variedad para visualizar en detalle
+          variedades = sorted(df_processed[VAR_COLUMN].dropna().unique())
+          seleccion_var = st.selectbox(
+              "Selecciona una variedad para visualizar sus resultados",
+              options=["Todas"] + variedades,
+              key="select_variedad"
+          )
+          if seleccion_var and seleccion_var != "Todas":
+              filtro = df_processed[df_processed[VAR_COLUMN] == seleccion_var]
+              filtro = df_processed
+          st.markdown(f"#### Resultados para la variedad: {seleccion_var}")
+          st.dataframe(filtro, use_container_width=True, height=400)
+          # Agregados por grupo (especie, variedad, fruto y periodo)
+          st.markdown("### Agregados por combinación de especie, variedad, fruto y periodo")
+          group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period']
+          # Cálculo de promedios de cond_sum y otros indicadores por grupo
+          if grp_method == "mean":
+              cond_agg = df_processed.groupby(group_cols, dropna=False)["cond_sum"].mean()
+              def _agg_mode(s):
+                  m = s.mode()
+                  return m.iloc[0] if not m.empty else np.nan
+              cond_agg = df_processed.groupby(group_cols, dropna=False)["cond_sum"].agg(_agg_mode)
+          agg_groups = (
+              df_processed
+              .groupby(group_cols, dropna=False)
+              .agg(
+                  muestras=("cond_sum", "size"),
+                  promedio_cond_sum=("cond_sum", "mean"),
+                  promedio_brix=(COL_BRIX, "mean"),
+                  promedio_acidez=(COL_ACIDEZ, "mean"),
+                  promedio_firmeza_punto=("Firmeza punto valor", "mean"),
+                  promedio_mejillas=("avg_mejillas", "mean"),
+                  periodo_inconsistente=("periodo_inconsistente", "max"),
+              )
+              .reset_index()
+          )
+          agg_groups["cond_sum_grp"] = cond_agg.values
+          # Binning de clusters grupales para visualización
+          if agg_groups["cond_sum_grp"].notna().nunique() >= 4:
+              bins = pd.qcut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
+              bins = pd.cut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
+          agg_groups["cluster_grp"] = bins
+          # Calcular agregados por variedad (sin distinguir fruto ni periodo)
+          if grp_method == "mean":
+              cond_agg_var = df_processed.groupby(VAR_COLUMN, dropna=False)["cond_sum"].mean()
+              def _agg_mode_var(s):
+                  m = s.mode()
+                  return m.iloc[0] if not m.empty else np.nan
+              cond_agg_var = df_processed.groupby(VAR_COLUMN, dropna=False)["cond_sum"].agg(_agg_mode_var)
+          agg_variedad = (
+              df_processed
+              .groupby(VAR_COLUMN, dropna=False)
+              .agg(
+                  muestras=("cond_sum", "size"),
+                  promedio_cond_sum=("cond_sum", "mean"),
+                  promedio_brix=(COL_BRIX, "mean"),
+                  promedio_acidez=(COL_ACIDEZ, "mean"),
+                  promedio_firmeza_punto=("Firmeza punto valor", "mean"),
+                  promedio_mejillas=("avg_mejillas", "mean"),
+              )
+              .reset_index()
+          )
+          agg_variedad["cond_sum_grp"] = cond_agg_var.values
+          if agg_variedad["cond_sum_grp"].notna().nunique() >= 4:
+              bins_var = pd.qcut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
+              bins_var = pd.cut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
+          agg_variedad["cluster_grp"] = bins_var
+
+          # Clasificación agregada por métricas basándose en los promedios del grupo
+          # Construir un mapa con información de sub‑tipo y color para cada grupo
+          group_info = {}
+          for key, grp in df_processed.groupby(group_cols):
+              first_row = grp.iloc[0]
+              group_info[key] = {
+                  'plum_subtype': first_row.get('plum_subtype', 'cherry'),
+                  'color': str(first_row.get(COLOR_COLUMN, '')).strip().lower(),
+              }
+          # Clasificar cada métrica promedio
+          brix_classes = []
+          mej_classes = []
+          fpd_classes = []
+          acid_classes = []
+          for _, row in agg_groups.iterrows():
+              key = (row[ESPECIE_COLUMN], row[VAR_COLUMN], row[FRUTO_COLUMN], row['harvest_period'])
+              info = group_info.get(key, {})
+              especie = row[ESPECIE_COLUMN]
+              # Seleccionar reglas según especie
+              if especie == 'Ciruela':
+                  subtype = info.get('plum_subtype', 'cherry')
+                  rules_dict = current_plum_rules.get(subtype, {})
+                  # Determinar color base (amarilla o blanca)
+                  color_key = 'blanca' if info.get('color', 'amarilla').startswith('blanc') else 'amarilla'
+                  period_key = row['harvest_period']
+                  rules_dict = current_nect_rules.get(color_key, {}).get(period_key, {})
+              # Obtener reglas por métrica
+              rules_brix = rules_dict.get(COL_BRIX, [])
+              rules_mej = rules_dict.get('FIRMEZA_MEJ', [])
+              rules_fpd = rules_dict.get('FIRMEZA_PUNTO', [])
+              rules_acid = rules_dict.get(COL_ACIDEZ, [])
+              # Clasificación usando las reglas
+              brix_classes.append(_classify_value(row['promedio_brix'], rules_brix))
+              mej_classes.append(_classify_value(row['promedio_mejillas'], rules_mej))
+              fpd_classes.append(_classify_value(row['promedio_firmeza_punto'], rules_fpd))
+              # Para acidez, utilizar sólo el primer valor de la muestra si existe
+              # En el promedio de acidez ya se utilizó la media; si se desea tomar el primer valor,
+              # podemos tomar el primer valor de esa combinación en df_processed.
+              # Buscamos el primer valor real (no nulo) en df_processed para este grupo
+              df_group = df_processed[(df_processed[ESPECIE_COLUMN] == row[ESPECIE_COLUMN]) &
+                                     (df_processed[VAR_COLUMN] == row[VAR_COLUMN]) &
+                                     (df_processed[FRUTO_COLUMN] == row[FRUTO_COLUMN]) &
+                                     (df_processed['harvest_period'] == row['harvest_period'])]
+              first_acid = df_group[COL_ACIDEZ].dropna().iloc[0] if not df_group[COL_ACIDEZ].dropna().empty else row['promedio_acidez']
+              acid_classes.append(_classify_value(first_acid, rules_acid))
+          # Añadir columnas de bandas por métrica
+          agg_groups['grp_brix'] = brix_classes
+          agg_groups['grp_mejillas'] = mej_classes
+          agg_groups['grp_firmeza_punto'] = fpd_classes
+          agg_groups['grp_acidez'] = acid_classes
+          # Recalcular cond_sum a nivel de grupo con estas bandas
+          metric_groups = ['grp_brix', 'grp_mejillas', 'grp_firmeza_punto', 'grp_acidez']
+          if cond_method == 'media':
+              agg_groups['cond_sum_metric'] = agg_groups[metric_groups].mean(axis=1, skipna=True)
+              agg_groups['cond_sum_metric'] = agg_groups[metric_groups].sum(axis=1, min_count=1)
+          # Calcular cluster basado en cond_sum_metric
+          if agg_groups['cond_sum_metric'].notna().nunique() >= 4:
+              bins_metric = pd.qcut(agg_groups['cond_sum_metric'], 4, labels=[1,2,3,4])
+              bins_metric = pd.cut(agg_groups['cond_sum_metric'], 4, labels=[1,2,3,4])
+          agg_groups['cluster_metric'] = bins_metric
+          # Sustituir cluster_grp por el resultado basado en métricas agregadas
+          agg_groups['cluster_grp'] = agg_groups['cluster_metric']
+          agg_groups['cond_sum_grp'] = agg_groups['cond_sum_metric']
+
+          # Estilo para colorear según cluster
+          def color_cluster(val):
+              try:
+                  grp = int(val)
+                  return f"background-color: {group_colors.get(grp, '')}"
+              except:
+                  return ''
+          def highlight_inconsistent(row):
+              """Devuelve estilos CSS para filas con periodos inconsistentes."""
+              if row.get('periodo_inconsistente'):
+                  return ['background-color: #ffd6d6;' for _ in row]
+                  return ['' for _ in row]
+          styled_agg = (
+              agg_groups.style
+              .applymap(color_cluster, subset=["cluster_grp"])
+              .apply(highlight_inconsistent, axis=1)
+          )
+          st.dataframe(styled_agg, use_container_width=True, height=400)
+
+          # Gráfico de las combinaciones en dos dimensiones (PCA)
+          st.markdown("#### Distribución PCA de los grupos")
+          try:
+              # Importaciones necesarias para el gráfico PCA
+              from sklearn.preprocessing import StandardScaler
+              from sklearn.decomposition import PCA
+              import altair as alt
+              # Seleccionamos las características numéricas para el análisis
+              pca_features = [
+                  "promedio_cond_sum",
+                  "promedio_brix",
+                  "promedio_acidez",
+                  "promedio_firmeza_punto",
+                  "promedio_mejillas",
+              ]
+              df_features = agg_groups[pca_features].fillna(0)
+              # Normalizamos
+              scaler = StandardScaler()
+              X_scaled = scaler.fit_transform(df_features)
+              pca = PCA(n_components=2)
+              pcs = pca.fit_transform(X_scaled)
+              agg_groups["PC1"] = pcs[:, 0]
+              agg_groups["PC2"] = pcs[:, 1]
+              # Construir gráfico interactivo con Altair
+              color_scale = alt.Scale(domain=[1,2,3,4], range=[group_colors[1], group_colors[2], group_colors[3], group_colors[4]])
+              chart = (
+                  alt.Chart(agg_groups)
+                  .mark_circle(size=80)
+                  .encode(
+                      x=alt.X("PC1", title="Componente principal 1"),
+                      y=alt.Y("PC2", title="Componente principal 2"),
+                      color=alt.Color("cluster_grp:N", scale=color_scale, legend=alt.Legend(title="Cluster")),
+                      tooltip=[ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period', 'cluster_grp', 'promedio_acidez']
+                  )
+                  .properties(width='container', height=400)
+                  .interactive()
+              )
+              st.altair_chart(chart, use_container_width=True)
+          except Exception as e:
+              st.info(f"No fue posible generar el gráfico PCA: {e}")
+
+          # Mostrar agregados por variedad (sin separar fruto ni periodo)
+          st.markdown("### Agregados por variedad")
+          st.dataframe(agg_variedad, use_container_width=True, height=300)
+          # Botón para descargar resultados completos y agregados
+          buf = io.BytesIO()
+          with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+              df_processed.to_excel(writer, index=False, sheet_name='Carozos')
+              agg_groups.to_excel(writer, index=False, sheet_name='Agregados_grupo')
+              agg_variedad.to_excel(writer, index=False, sheet_name='Agregados_variedad')
+          buf.seek(0)
+          st.download_button(
+              label="📥 Descargar resultados como Excel",
+              data=buf.getvalue(),
+              file_name="carozos_procesados.xlsx",
+              mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          )
