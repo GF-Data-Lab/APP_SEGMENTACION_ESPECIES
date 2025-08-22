@@ -1131,6 +1131,7 @@ def segmentacion_app(especie: str):
             acid_classes.append(_classify_value(first_acid, rules_acid))
           # Añadir columnas de bandas por métrica
           # Añadir columnas de bandas por métrica
+          agg_groups['grp_brix'] = brix_classes
           agg_groups['grp_mejillas'] = mej_classes
           agg_groups['grp_firmeza_punto'] = fpd_classes
           agg_groups['grp_acidez'] = acid_classes
