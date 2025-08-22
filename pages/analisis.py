@@ -37,6 +37,7 @@ def generarMenu():
     with st.sidebar:
         show_logo()
         if st.button('Página de Inicio 🏚️'):      st.switch_page('app.py')
+        if st.button('Carga de archivos 📁'):      st.switch_page('pages/carga_datos.py')
         if st.button('Segmentación de especies 🍑'): st.switch_page('pages/Segmentacion_especies.py')
         if st.button('Modelo de Clasificación'): st.switch_page('pages/Cluster_especies.py')
         if st.button('Análisis exploratorio'):   st.switch_page('pages/analisis.py')
