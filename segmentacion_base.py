@@ -420,13 +420,16 @@ def segmentacion_app(especie: str):
         df["harvest_period"] = "sin_fecha"  # inicializar
         # para nectarines, determinar periodo según color
         idx_nectar = df[ESPECIE_COLUMN] == "Nectarin"
-        # Para cada fila, usar función A o B según color
-        for i in df[idx_nectar].index:
-            color = str(df.at[i, COLOR_COLUMN]).strip().lower()
-            if color.startswith("blanc"):
-                df.at[i, "harvest_period"] = _harvest_period_b(df.at[i, DATE_COLUMN])
-            else:
-                df.at[i, "harvest_period"] = _harvest_period_a(df.at[i, DATE_COLUMN])
+        color_series = (
+            df.get(COLOR_COLUMN, pd.Series("", index=df.index))
+              .fillna("")
+              .astype(str)
+              .str.strip()
+              .str.lower()
+        )
+        idx_blanca = idx_nectar & color_series.str.startswith("blanc")
+        df.loc[idx_blanca, "harvest_period"] = df.loc[idx_blanca, DATE_COLUMN].apply(_harvest_period_b)
+        df.loc[idx_nectar & ~idx_blanca, "harvest_period"] = df.loc[idx_nectar & ~idx_blanca, DATE_COLUMN].apply(_harvest_period_a)
         df.loc[
             idx_nectar & (df["harvest_period"] == "sin_fecha"),
             "harvest_period",
@@ -826,43 +829,36 @@ def segmentacion_app(especie: str):
     # Convertir fechas
     if DATE_COLUMN in tmp_df.columns:
         tmp_df[DATE_COLUMN] = tmp_df[DATE_COLUMN].apply(_safe_parse_date)
-        # Asignar periodo para cada registro (utilizando funciones de cosecha)
-        periods = []
-        for idx, row in tmp_df.iterrows():
-            especie_row = row.get(ESPECIE_COLUMN)
-            color = str(row.get(COLOR_COLUMN, "")).strip().lower()
-            if especie_row == "Nectarin":
-                if color.startswith("blanc"):
-                    periods.append(_harvest_period_b(row[DATE_COLUMN]))
-                else:
-                    periods.append(_harvest_period_a(row[DATE_COLUMN]))
-            else:
-                periods.append("sin_fecha")
-        tmp_df["harvest_period"] = periods
+        idx_nectar = tmp_df[ESPECIE_COLUMN] == "Nectarin"
+        color_series = (
+            tmp_df.get(COLOR_COLUMN, pd.Series("", index=tmp_df.index))
+                  .fillna("")
+                  .astype(str)
+                  .str.strip()
+                  .str.lower()
+        )
+        idx_blanca = idx_nectar & color_series.str.startswith("blanc")
+        tmp_df["harvest_period"] = "sin_fecha"
+        tmp_df.loc[idx_blanca, "harvest_period"] = tmp_df.loc[idx_blanca, DATE_COLUMN].apply(_harvest_period_b)
+        tmp_df.loc[idx_nectar & ~idx_blanca, "harvest_period"] = tmp_df.loc[idx_nectar & ~idx_blanca, DATE_COLUMN].apply(_harvest_period_a)
     else:
         tmp_df["harvest_period"] = "sin_fecha"
     _to_numeric(tmp_df, NUMERIC_COLS)
     # Detección de outliers por especie, variedad, muestra y periodo (|z| > 2)
-    outlier_flags = pd.Series(False, index=tmp_df.index)
-    outlier_cols = {col: pd.Series(False, index=tmp_df.index) for col in NUMERIC_COLS if col in tmp_df.columns}
     group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, "harvest_period"]
+    outlier_cols = {}
     for col in [c for c in NUMERIC_COLS if c in tmp_df.columns]:
-        for _, group_df in tmp_df.groupby(group_cols, dropna=False):
-            serie = group_df[col].astype(float)
-            if serie.empty:
-                continue
-            m = serie.mean()
-            s = serie.std()
-            if s == 0 or pd.isna(s):
-                continue
-            z = (serie - m) / s
-            mask = (z.abs() > 2)
-            outlier_flags.loc[group_df.index] = outlier_flags.loc[group_df.index] | mask
-            outlier_cols[col].loc[group_df.index] = outlier_cols[col].loc[group_df.index] | mask
-    tmp_df["Outlier"] = outlier_flags
-    # Registrar para cada columna si es outlier (columna de marcas)
-    for col, flags in outlier_cols.items():
-        tmp_df[f"Outlier_{col}"] = flags
+        def _zscore(s: pd.Series) -> pd.Series:
+            m = s.mean()
+            sd = s.std()
+            if sd == 0 or pd.isna(sd):
+                return pd.Series(np.nan, index=s.index)
+            return (s - m) / sd
+        z = tmp_df.groupby(group_cols, dropna=False)[col].transform(_zscore)
+        mask = z.abs() > 2
+        outlier_cols[col] = mask.fillna(False)
+        tmp_df[f"Outlier_{col}"] = outlier_cols[col]
+    tmp_df["Outlier"] = pd.DataFrame(outlier_cols).any(axis=1) if outlier_cols else False
     st.markdown("### Previsualización y edición del archivo cargado")
     st.write("Se detectan outliers por especie, variedad, muestra y periodo usando ±2 desviaciones estándar. Las celdas marcadas en rojo indican outliers.")
     # Construir tabla de outliers con media de grupo para cada métrica
