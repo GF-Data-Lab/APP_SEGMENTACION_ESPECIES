@@ -38,19 +38,19 @@ def generarMenu():
         show_logo()
         if st.button('Página de Inicio 🏚️'):      st.switch_page('app.py')
         if st.button('Carga de archivos 📁'):      st.switch_page('pages/carga_datos.py')
-        if st.button('Segmentación Ciruela 🍑'): st.switch_page('pages/segmentacion_ciruela.py')
-        if st.button('Segmentación Nectarina 🍑'): st.switch_page('pages/segmentacion_nectarina.py')
-        if st.button('Modelo de Clasificación'): st.switch_page('pages/Cluster_especies.py')
-        if st.button('Análisis exploratorio'):   st.switch_page('pages/analisis.py')
+        if st.button('Valores por defecto ⚙️'):   st.switch_page('pages/default_values.py')
+        if st.button('Bandas por indicador 🎯'):   st.switch_page('pages/bandas_indicador.py')
+        if st.button('Modelo y clustering 🧠'):    st.switch_page('pages/modelo_cluster.py')
+        if st.button('Análisis exploratorio 🔍'):  st.switch_page('pages/analisis.py')
 generarMenu()
 
 st.title("🔍 Análisis Exploratorio y Clustering de Carozos")
 
 # —————— Cargar datos ——————
-if "df_seg_especies" not in st.session_state:
-    st.warning("Procesa primero en 'Segmentación de especies' antes de ver el análisis.")
+if "carozos_df" not in st.session_state:
+    st.warning("Carga primero un archivo en 'Carga de archivos'.")
     st.stop()
-df = st.session_state["df_seg_especies"].copy()
+df = st.session_state["carozos_df"].copy()
 numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
 
 
