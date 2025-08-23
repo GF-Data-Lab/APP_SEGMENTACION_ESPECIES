@@ -8,3 +8,4 @@ openpyxl
 altair
 xlsxwriter
 jinja2
+pyyaml
