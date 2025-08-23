@@ -1170,7 +1170,7 @@ def segmentacion_app(especie: str):
               """Devuelve estilos CSS para filas con periodos inconsistentes."""
               if row.get('periodo_inconsistente'):
                   return ['background-color: #ffd6d6;' for _ in row]
-                  return ['' for _ in row]
+              return ['' for _ in row]
           styled_agg = (
               agg_groups.style
               .applymap(color_cluster, subset=["cluster_grp"])
