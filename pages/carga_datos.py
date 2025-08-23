@@ -52,6 +52,9 @@ def main():
             df_carozos = pd.read_excel(carozos_file, sheet_name="CAROZOS", usecols="A:AP", skiprows=2, dtype=str)
             st.session_state["carozos_df"] = df_carozos
             st.success("Archivo de carozos cargado correctamente")
+            st.dataframe(df_carozos.head(), use_container_width=True)
+            csv_carozos = df_carozos.to_csv(index=False).encode("utf-8")
+            st.download_button("💾 Guardar datos de carozos", csv_carozos, "carozos_cargado.csv", "text/csv")
         except Exception as e:
             st.error(f"Error al leer el archivo de carozos: {e}")
 
@@ -61,6 +64,9 @@ def main():
             df_cerezas = pd.read_excel(cerezas_file, dtype=str)
             st.session_state["cerezas_df"] = df_cerezas
             st.success("Archivo de cerezas cargado correctamente")
+            st.dataframe(df_cerezas.head(), use_container_width=True)
+            csv_cerezas = df_cerezas.to_csv(index=False).encode("utf-8")
+            st.download_button("💾 Guardar datos de cerezas", csv_cerezas, "cerezas_cargado.csv", "text/csv")
         except Exception as e:
             st.error(f"Error al leer el archivo de cerezas: {e}")
 
