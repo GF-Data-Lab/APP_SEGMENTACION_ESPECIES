@@ -1,7 +1,12 @@
-import yaml
-from pathlib import Path
 import streamlit as st
 from utils import show_logo
+from segmentacion_base import (
+    DEFAULT_PLUM_RULES,
+    DEFAULT_NECT_RULES,
+    plum_rules_to_df,
+    nect_rules_to_df,
+)
+
 
 st.set_page_config(page_title="Bandas por indicador", page_icon="🎯", layout="wide")
 
@@ -42,27 +47,30 @@ def generar_menu():
 def main():
     generar_menu()
     st.title("Bandas por indicador")
-    path = Path("bandas.yaml")
-    if "bandas" not in st.session_state:
-        if path.exists():
-            st.session_state["bandas"] = yaml.safe_load(path.read_text()) or {}
-        else:
-            st.session_state["bandas"] = {}
-    data = st.session_state["bandas"]
-    text = st.text_area(
-        "Editar bandas (YAML)",
-        yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
-        height=300,
-    )
-    if st.button("Guardar"):
-        try:
-            parsed = yaml.safe_load(text) or {}
-            st.session_state["bandas"] = parsed
-            path.write_text(yaml.safe_dump(parsed, allow_unicode=True, sort_keys=False))
-            st.success("Bandas guardadas en bandas.yaml")
-        except yaml.YAMLError as e:
-            st.error(f"YAML inválido: {e}")
+
+    # Inicializar dataframes de reglas
+    if "plum_rules_df" not in st.session_state:
+        st.session_state["plum_rules_df"] = plum_rules_to_df(DEFAULT_PLUM_RULES)
+    if "nect_rules_df" not in st.session_state:
+        st.session_state["nect_rules_df"] = nect_rules_to_df(DEFAULT_NECT_RULES)
+
+    especie = st.radio("Especie", ["Ciruela", "Nectarina"], horizontal=True)
+    if especie == "Ciruela":
+        st.session_state["plum_rules_df"] = st.data_editor(
+            st.session_state["plum_rules_df"],
+            num_rows="dynamic",
+            key="plum_rules_editor",
+        )
+    else:
+        st.session_state["nect_rules_df"] = st.data_editor(
+            st.session_state["nect_rules_df"],
+            num_rows="dynamic",
+            key="nect_rules_editor",
+        )
+
+    st.info("Los cambios se guardan automáticamente en la sesión.")
 
 
 if __name__ == "__main__":
     main()
+
