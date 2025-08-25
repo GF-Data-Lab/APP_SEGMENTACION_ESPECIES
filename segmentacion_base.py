@@ -1197,17 +1197,35 @@ def segmentacion_app(especie: str):
                   return ['background-color: #ffd6d6;' for _ in row]
               return ['' for _ in row]
           # Mostrar siempre la agrupación por reglas y, si existe, comparar con
-          # la clusterización automática ejecutada (KMeans u otro algoritmo)
+          # la clusterización automática ejecutada (KMeans u otro algoritmo).
+          # Solo se muestran las columnas consideradas relevantes para el
+          # usuario final.
+          display_cols = [
+              ESPECIE_COLUMN,
+              VAR_COLUMN,
+              FRUTO_COLUMN,
+              "harvest_period",
+              "muestras",
+              "promedio_cond_sum",
+              "promedio_brix",
+              "promedio_acidez",
+              "promedio_firmeza_punto",
+              "promedio_mejillas",
+              "cond_sum_grp",
+              "cluster_grp",
+          ]
           if "cluster_auto" in agg_groups.columns:
               st.markdown("#### Comparación de clusters (reglas vs automático)")
+              display_cols.append("cluster_auto")
               subset_cols = ["cluster_grp", "cluster_auto"]
           else:
               st.markdown("#### Segmentación por reglas")
               subset_cols = ["cluster_grp"]
 
           styled_agg = (
-              agg_groups.style
-              .applymap(color_cluster, subset=subset_cols)
+              agg_groups[display_cols]
+              .style
+              .applymap(color_cluster, subset=[c for c in subset_cols if c in display_cols])
               .apply(highlight_inconsistent, axis=1)
           )
           st.dataframe(styled_agg, use_container_width=True, height=400)
@@ -1284,7 +1302,18 @@ def segmentacion_app(especie: str):
 
           # Mostrar agregados por variedad (sin separar fruto ni periodo)
           st.markdown("### Agregados por variedad")
-          st.dataframe(agg_variedad, use_container_width=True, height=300)
+          cols_variedad = [
+              VAR_COLUMN,
+              "muestras",
+              "promedio_cond_sum",
+              "promedio_brix",
+              "promedio_acidez",
+              "promedio_firmeza_punto",
+              "promedio_mejillas",
+              "cond_sum_grp",
+              "cluster_grp",
+          ]
+          st.dataframe(agg_variedad[cols_variedad], use_container_width=True, height=300)
           # Botón para descargar resultados completos y agregados
           buf = io.BytesIO()
           with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
