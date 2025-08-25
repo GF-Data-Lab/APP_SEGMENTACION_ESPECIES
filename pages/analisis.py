@@ -50,36 +50,47 @@ st.title("🔍 Análisis Exploratorio y Clustering de Carozos")
 if "carozos_df" not in st.session_state:
     st.warning("Carga primero un archivo en 'Carga de archivos'.")
     st.stop()
-df = st.session_state["carozos_df"].copy()
+df_raw = st.session_state["carozos_df"].copy()
 
 # Columnas esperadas para permitir clasificación y detección de outliers
 expected_cols = [
     "Especie", "Variedad", "Quilla", "Hombro", "Mejilla 1", "Mejilla 2",
     "BRIX", "Acidez (%)", "Punta", "Peso (g)", "cond_sum_grp"
 ]
-missing = [c for c in expected_cols if c not in df.columns]
+missing = [c for c in expected_cols if c not in df_raw.columns]
 if missing:
     st.warning(
         "No se encontraron las columnas: " + ", ".join(missing) +
         ". Se crearán valores nulos para continuar."
     )
     for col in missing:
-        df[col] = np.nan
+        df_raw[col] = np.nan
 
-numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+numeric_cols_all = df_raw.select_dtypes(include=np.number).columns.tolist()
+mask_outliers = pd.Series(False, index=df_raw.index)
+for col in numeric_cols_all:
+    q1 = df_raw[col].quantile(0.25)
+    q3 = df_raw[col].quantile(0.75)
+    iqr = q3 - q1
+    mask_outliers |= (df_raw[col] < q1 - 1.5 * iqr) | (df_raw[col] > q3 + 1.5 * iqr)
 
 # —————— Definir rangos y etiquetas ——————
 # grp_cod_sum entre 1–4 ➔ Top 1; 5–8 ➔ Top 2; 9–12 ➔ Top 3; 13–16 ➔ Top 4
 bins  = [0, 4,  8,   12,  16]                  # límites (0 para incluir 1)
 labels = ["Top 1", "Top 2", "Top 3", "Top 4"]   # etiquetas
 
-df["cond_sum_grp"] = pd.to_numeric(df["cond_sum_grp"], errors="coerce")
-df["rankid"] = pd.cut(
-    df["cond_sum_grp"],
+df_raw["cond_sum_grp"] = pd.to_numeric(df_raw["cond_sum_grp"], errors="coerce")
+df_raw["rankid"] = pd.cut(
+    df_raw["cond_sum_grp"],
     bins=bins,
     labels=labels,
     include_lowest=True
 )
+
+df_no_outliers = df_raw[~mask_outliers].copy()
+exclude_out = st.checkbox("Excluir registros atípicos (IQR)", value=False)
+df = df_no_outliers if exclude_out else df_raw.copy()
+numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
 
 # Ahora sí son 7 pestañas
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
@@ -150,13 +161,13 @@ with tab1:
 
     st.markdown("#### 1.d. Registros atípicos (IQR)")
     outlier_frames = []
-    for col in numeric_cols:
-        q1 = df[col].quantile(0.25)
-        q3 = df[col].quantile(0.75)
+    for col in numeric_cols_all:
+        q1 = df_raw[col].quantile(0.25)
+        q3 = df_raw[col].quantile(0.75)
         iqr = q3 - q1
-        mask = (df[col] < q1 - 1.5 * iqr) | (df[col] > q3 + 1.5 * iqr)
+        mask = (df_raw[col] < q1 - 1.5 * iqr) | (df_raw[col] > q3 + 1.5 * iqr)
         if mask.any():
-            tmp = df.loc[mask, ["Especie", "Variedad", "rankid", col]].copy()
+            tmp = df_raw.loc[mask, ["Especie", "Variedad", "rankid", col]].copy()
             tmp["Variable"] = col
             outlier_frames.append(tmp)
     if outlier_frames:
@@ -202,7 +213,14 @@ def run_pca(data, n):
 def run_km(pc, k):
     km = KMeans(n_clusters=k, random_state=0)
     labels = km.fit_predict(pc)
-    return labels, km.inertia_, silhouette_score(pc, labels)
+    # scikit-learn's silhouette_score requires at least 2 distinct labels.
+    # In some datasets KMeans may return a single label (e.g. identical samples),
+    # which would normally raise a ValueError.  We guard against that case and
+    # return ``None`` for the silhouette instead of crashing the app.
+    sil = None
+    if len(set(labels)) > 1:
+        sil = silhouette_score(pc, labels)
+    return labels, km.inertia_, sil
 
 # --- 4. PCA ---
 with tab4:
@@ -234,7 +252,7 @@ with tab5:
     pct_cluster = st.slider("% puntos scatter", 5, 100, 25, key="pct_cluster")
 
     # Recalcular genérico
-    labels_gen = run_km(pc, best_k)[0]
+    labels_gen, inertia_gen, sil_gen = run_km(pc, best_k)
     labels_gen_s = pd.Series(labels_gen, index=pca_df.index)
     idx_gen = pca_df.sample(frac=pct_cluster/100, random_state=0).index
 
@@ -244,7 +262,7 @@ with tab5:
     pca_df_plum = pd.DataFrame(pc_plum,
                                columns=[f"PC{i+1}" for i in range(n_comp)],
                                index=df_plum.index)
-    labels_plum = run_km(pc_plum, best_k)[0]
+    labels_plum, inertia_plum, sil_plum = run_km(pc_plum, best_k)
     labels_plum_s = pd.Series(labels_plum, index=pca_df_plum.index)
     idx_plum = pca_df_plum.sample(frac=pct_cluster/100, random_state=0).index
 
@@ -254,18 +272,24 @@ with tab5:
     pca_df_nec = pd.DataFrame(pc_nec,
                               columns=[f"PC{i+1}" for i in range(n_comp)],
                               index=df_nec.index)
-    labels_nec = run_km(pc_nec, best_k)[0]
+    labels_nec, inertia_nec, sil_nec = run_km(pc_nec, best_k)
     labels_nec_s = pd.Series(labels_nec, index=pca_df_nec.index)
     idx_nec = pca_df_nec.sample(frac=pct_cluster/100, random_state=0).index
 
     # selector de modo
     modo = st.radio("Mostrar clustering para:", ["Genérico", "Ciruela", "Nectarin"])
     if modo == "Genérico":
-        df_plot, labels_plot_s, idx_plot, title = pca_df, labels_gen_s, idx_gen, f"Genérico k={best_k}"
+        df_plot, labels_plot_s, idx_plot, title, sil, inertia, df_orig = (
+            pca_df, labels_gen_s, idx_gen, f"Genérico k={best_k}", sil_gen, inertia_gen, df
+        )
     elif modo == "Ciruela":
-        df_plot, labels_plot_s, idx_plot, title = pca_df_plum, labels_plum_s, idx_plum, f"Ciruela k={best_k}"
+        df_plot, labels_plot_s, idx_plot, title, sil, inertia, df_orig = (
+            pca_df_plum, labels_plum_s, idx_plum, f"Ciruela k={best_k}", sil_plum, inertia_plum, df_plum
+        )
     else:
-        df_plot, labels_plot_s, idx_plot, title = pca_df_nec, labels_nec_s, idx_nec, f"Nectarin k={best_k}"
+        df_plot, labels_plot_s, idx_plot, title, sil, inertia, df_orig = (
+            pca_df_nec, labels_nec_s, idx_nec, f"Nectarin k={best_k}", sil_nec, inertia_nec, df_nec
+        )
 
     fig = px.scatter(
         df_plot.loc[idx_plot],
@@ -277,6 +301,14 @@ with tab5:
     )
     st.plotly_chart(fig, use_container_width=True)
     st.write("Tamaños de cluster:", labels_plot_s.value_counts().to_dict())
+    st.write("Inercia:", round(inertia, 3))
+    if sil is not None:
+        st.write("Silhouette Score:", round(sil, 3))
+    else:
+        st.write("Silhouette Score: no disponible (1 solo cluster)")
+    summary = df_orig.assign(cluster=labels_plot_s).groupby("cluster")[numeric_cols].mean()
+    st.markdown("Promedios por cluster:")
+    st.dataframe(summary, use_container_width=True)
 
 # --- 6. Exportar ---
 with tab6:
