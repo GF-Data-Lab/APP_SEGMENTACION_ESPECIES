@@ -1,7 +1,6 @@
-import json
-from pathlib import Path
 import streamlit as st
 from utils import show_logo
+
 
 st.set_page_config(page_title="Valores por defecto", page_icon="⚙️", layout="wide")
 
@@ -42,27 +41,50 @@ def generar_menu():
 def main():
     generar_menu()
     st.title("Valores por defecto")
-    path = Path("defaults.json")
-    if "default_values" not in st.session_state:
-        if path.exists():
-            st.session_state["default_values"] = json.loads(path.read_text())
-        else:
-            st.session_state["default_values"] = {}
-    data = st.session_state["default_values"]
-    text = st.text_area(
-        "Editar valores (JSON)",
-        json.dumps(data, indent=2, ensure_ascii=False),
-        height=300,
+
+    # Inicializar valores en la sesión
+    if "default_plum_subtype" not in st.session_state:
+        st.session_state["default_plum_subtype"] = "sugar"
+    if "sugar_upper" not in st.session_state:
+        st.session_state["sugar_upper"] = 60.0
+    if "default_color" not in st.session_state:
+        st.session_state["default_color"] = "Amarilla"
+    if "default_period" not in st.session_state:
+        st.session_state["default_period"] = "tardia"
+
+    st.header("Ciruela")
+    st.selectbox(
+        "Tipo de ciruela por defecto si el peso no está disponible",
+        options=["sugar", "candy"],
+        index=["sugar", "candy"].index(st.session_state["default_plum_subtype"]),
+        key="default_plum_subtype",
     )
-    if st.button("Guardar"):
-        try:
-            parsed = json.loads(text)
-            st.session_state["default_values"] = parsed
-            path.write_text(json.dumps(parsed, indent=2, ensure_ascii=False))
-            st.success("Valores guardados en defaults.json")
-        except json.JSONDecodeError as e:
-            st.error(f"JSON inválido: {e}")
+    st.number_input(
+        "Peso máximo para sugar (g)",
+        min_value=10.0,
+        max_value=200.0,
+        value=float(st.session_state["sugar_upper"]),
+        step=1.0,
+        key="sugar_upper",
+    )
+
+    st.header("Nectarina")
+    st.selectbox(
+        "Color de pulpa por defecto (si falta)",
+        options=["Amarilla", "Blanca"],
+        index=["Amarilla", "Blanca"].index(st.session_state["default_color"]),
+        key="default_color",
+    )
+    st.selectbox(
+        "Periodo de cosecha por defecto (si falta fecha)",
+        options=["muy_temprana", "temprana", "tardia", "sin_fecha"],
+        index=["muy_temprana", "temprana", "tardia", "sin_fecha"].index(st.session_state["default_period"]),
+        key="default_period",
+    )
+
+    st.success("Los valores se guardan automáticamente en la sesión.")
 
 
 if __name__ == "__main__":
     main()
+
