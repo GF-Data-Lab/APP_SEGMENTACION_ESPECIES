@@ -527,6 +527,13 @@ def segmentacion_app(especie: str):
         df = df.merge(
             grp_cond[grp_keys + ["cluster_grp"]], on=grp_keys, how="left"
         )
+        # Asignar rangos de condición agrupada
+        df["rankid"] = pd.cut(
+            df["cond_sum_grp"],
+            bins=[0, 4, 8, 12, 16],
+            labels=["Top 1", "Top 2", "Top 3", "Top 4"],
+            include_lowest=True,
+        )
         # 9) Validación de fechas: identificar registros con periodo 'muy_temprana' cuyo mes esté fuera del rango esperado
         try:
             df["periodo_inconsistente"] = False
