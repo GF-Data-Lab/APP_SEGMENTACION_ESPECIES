@@ -51,22 +51,27 @@ if "carozos_df" not in st.session_state:
     st.warning("Carga primero un archivo en 'Carga de archivos'.")
     st.stop()
 df = st.session_state["carozos_df"].copy()
+
+# Columnas esperadas para permitir clasificación y detección de outliers
+expected_cols = [
+    "Especie", "Variedad", "Quilla", "Hombro", "Mejilla 1", "Mejilla 2",
+    "BRIX", "Acidez (%)", "Punta", "Peso (g)", "cond_sum_grp"
+]
+missing = [c for c in expected_cols if c not in df.columns]
+if missing:
+    st.warning(
+        "No se encontraron las columnas: " + ", ".join(missing) +
+        ". Se crearán valores nulos para continuar."
+    )
+    for col in missing:
+        df[col] = np.nan
+
 numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
-
-
 
 # —————— Definir rangos y etiquetas ——————
 # grp_cod_sum entre 1–4 ➔ Top 1; 5–8 ➔ Top 2; 9–12 ➔ Top 3; 13–16 ➔ Top 4
 bins  = [0, 4,  8,   12,  16]                  # límites (0 para incluir 1)
 labels = ["Top 1", "Top 2", "Top 3", "Top 4"]   # etiquetas
-
-# Garantizar que exista la columna utilizada para la clasificación.
-# Cuando el dataframe proviene directamente del cargador de archivos
-# puede no incluir ``cond_sum_grp``; en ese caso añadimos la columna con
-# valores nulos para evitar errores y convertirla a numérica si es necesario.
-if "cond_sum_grp" not in df.columns:
-    st.warning("No se encontró la columna 'cond_sum_grp'. Se crearán valores nulos para continuar.")
-    df["cond_sum_grp"] = np.nan
 
 df["cond_sum_grp"] = pd.to_numeric(df["cond_sum_grp"], errors="coerce")
 df["rankid"] = pd.cut(
@@ -99,15 +104,13 @@ with tab1:
         default=opciones_rank
     )
 
-    # 2) Filtra el DataFrame según la selección
-    df_filtrado = df[df["rankid"].isin(seleccion)]
-
-    # 3) Columnas a mostrar
+    # 2) Filtra el DataFrame según la selección y ordena las columnas
     columnas_detalle = [
         "Especie", "Variedad", "Quilla", "Hombro", "Mejilla 1", "Mejilla 2",
         "BRIX", "Acidez (%)", "Punta", "Peso (g)",
         "cond_sum_grp", "rankid"
     ]
+    df_filtrado = df[df["rankid"].isin(seleccion)][columnas_detalle]
 
     # 4) Divide el layout en 2 columnas
     col1, col2 = st.columns(2)
@@ -116,16 +119,16 @@ with tab1:
     with col1:
         st.markdown("**Ciruela**")
         df_ciru = df_filtrado[df_filtrado["Especie"] == "Ciruela"]
-        st.dataframe(df_ciru[columnas_detalle], use_container_width=True)
+        st.dataframe(df_ciru, use_container_width=True)
 
     # 6) En la segunda columna, solo Nectarina
     with col2:
         st.markdown("**Nectarina**")
         df_nec = df_filtrado[df_filtrado["Especie"] == "Nectarin"]
-        st.dataframe(df_nec[columnas_detalle], use_container_width=True)
+        st.dataframe(df_nec, use_container_width=True)
 
-    # 5) Renderiza la tabla filtrada con esas columnas
-    st.dataframe(df_filtrado[columnas_detalle])
+    # 7) Renderiza la tabla filtrada con esas columnas
+    st.dataframe(df_filtrado)
     st.subheader("1. Estadísticas Descriptivas")
     st.dataframe(df.describe(include="all").T, use_container_width=True)
 
@@ -144,6 +147,23 @@ with tab1:
             title=f"{col} por Especie"
         )
         st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("#### 1.d. Registros atípicos (IQR)")
+    outlier_frames = []
+    for col in numeric_cols:
+        q1 = df[col].quantile(0.25)
+        q3 = df[col].quantile(0.75)
+        iqr = q3 - q1
+        mask = (df[col] < q1 - 1.5 * iqr) | (df[col] > q3 + 1.5 * iqr)
+        if mask.any():
+            tmp = df.loc[mask, ["Especie", "Variedad", "rankid", col]].copy()
+            tmp["Variable"] = col
+            outlier_frames.append(tmp)
+    if outlier_frames:
+        df_out = pd.concat(outlier_frames, ignore_index=True)
+        st.dataframe(df_out, use_container_width=True)
+    else:
+        st.write("No se detectaron outliers.")
 
 # --- 2. Matriz de correlaciones ---
 with tab2:
