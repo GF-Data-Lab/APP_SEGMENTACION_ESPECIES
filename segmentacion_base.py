@@ -28,6 +28,137 @@ import io
 from utils import show_logo
 
 
+# ----------------------------------------------------------------------
+# Bandas por defecto y utilidades de conversión disponibles a nivel de
+# módulo para que otras páginas puedan reutilizarlas.
+# ----------------------------------------------------------------------
+DEFAULT_PLUM_RULES: Dict[str, Dict[str, List[Tuple[float, float, int]]]] = {
+    "candy": {
+        "BRIX": [(18.0, np.inf, 1), (16.0, 18.0, 2), (14.0, 16.0, 3), (-np.inf, 14.0, 4)],
+        "FIRMEZA_PUNTO": [(7.0, np.inf, 1), (5.0, 7.0, 2), (4.0, 5.0, 3), (-np.inf, 4.0, 4)],
+        "FIRMEZA_MEJ": [(9.0, np.inf, 1), (7.0, 9.0, 2), (6.0, 7.0, 3), (-np.inf, 6.0, 4)],
+        "Acidez (%)": [(-np.inf, 0.60, 1), (0.60, 0.81, 2), (0.81, 1.00, 3), (1.00, np.inf, 4)],
+    },
+    "sugar": {
+        "BRIX": [(21.0, np.inf, 1), (18.0, 21.0, 2), (15.0, 18.0, 3), (-np.inf, 15.0, 4)],
+        "FIRMEZA_PUNTO": [(6.0, np.inf, 1), (4.5, 6.0, 2), (3.0, 4.5, 3), (-np.inf, 3.0, 4)],
+        "FIRMEZA_MEJ": [(8.0, np.inf, 1), (5.0, 8.0, 2), (4.0, 5.0, 3), (-np.inf, 4.0, 4)],
+        "Acidez (%)": [(-np.inf, 0.60, 1), (0.60, 0.81, 2), (0.81, 1.00, 3), (1.00, np.inf, 4)],
+    },
+}
+
+
+def _mk_nec_rules(
+    brix1: float, brix2: float, brix3: float,
+    mej_1: float, mej_2: float,
+) -> Dict[str, List[Tuple[float, float, int]]]:
+    return {
+        "BRIX": [(brix1, np.inf, 1), (brix2, brix1, 2), (brix3, brix2, 3), (-np.inf, brix3, 4)],
+        "FIRMEZA_PUNTO": [(9.0, np.inf, 1), (8.0, 9.0, 2), (7.0, 8.0, 3), (-np.inf, 7.0, 4)],
+        "FIRMEZA_MEJ": [(mej_1, np.inf, 1), (mej_2, mej_1, 2), (9.0, mej_2, 3), (-np.inf, 9.0, 4)],
+        "Acidez (%)": [(-np.inf, 0.60, 1), (0.60, 0.81, 2), (0.81, 1.00, 3), (1.00, np.inf, 4)],
+    }
+
+
+DEFAULT_NECT_RULES: Dict[str, Dict[str, Dict[str, List[Tuple[float, float, int]]]]] = {
+    "amarilla": {
+        "muy_temprana": _mk_nec_rules(13.0, 10.0, 9.0, 14.0, 12.0),
+        "temprana": _mk_nec_rules(13.0, 10.0, 9.0, 14.0, 12.0),
+        "tardia": _mk_nec_rules(14.0, 12.0, 10.0, 14.0, 12.0),
+    },
+    "blanca": {
+        "muy_temprana": _mk_nec_rules(13.0, 10.0, 9.0, 13.0, 11.0),
+        "temprana": _mk_nec_rules(13.0, 10.0, 9.0, 13.0, 11.0),
+        "tardia": _mk_nec_rules(14.0, 12.0, 10.0, 13.0, 11.0),
+    },
+}
+
+
+def plum_rules_to_df(rules: Dict[str, Dict[str, List[Tuple[float, float, int]]]]) -> pd.DataFrame:
+    """Flatten PLUM_RULES into a dataframe for editing."""
+    rows = []
+    for subtype, metrics in rules.items():
+        for metric, bands in metrics.items():
+            for lo, hi, group in bands:
+                rows.append({
+                    "subtype": subtype,
+                    "metric": metric,
+                    "min": lo,
+                    "max": hi,
+                    "group": group,
+                })
+    df = pd.DataFrame(rows)
+    # Añadir columna apply para permitir activar/desactivar reglas
+    df["apply"] = True
+    return df
+
+
+def df_to_plum_rules(df: pd.DataFrame) -> Dict[str, Dict[str, List[Tuple[float, float, int]]]]:
+    """Build PLUM_RULES dict from an edited dataframe."""
+    out: Dict[str, Dict[str, List[Tuple[float, float, int]]]] = {}
+    # Filtrar filas válidas: apply=True y campos obligatorios no nulos
+    df_valid = df[(df.get("apply", True)) & df["subtype"].notna() & df["metric"].notna()]
+    for subtype in df_valid["subtype"].unique():
+        sub = df_valid[df_valid["subtype"] == subtype]
+        out[subtype] = {}
+        for metric in sub["metric"].unique():
+            mdf = sub[sub["metric"] == metric]
+            # sort by min descending so highest band appears first
+            mdf = mdf.sort_values(by=["min"], ascending=False)
+            bands: List[Tuple[float, float, int]] = []
+            for _, r in mdf.iterrows():
+                # saltar filas con campos nulos
+                if pd.isna(r["min"]) or pd.isna(r["max"]) or pd.isna(r["group"]):
+                    continue
+                bands.append((float(r["min"]), float(r["max"]), int(r["group"])) )
+            if bands:
+                out[subtype][metric] = bands
+    return out
+
+
+def nect_rules_to_df(rules: Dict[str, Dict[str, Dict[str, List[Tuple[float, float, int]]]]]) -> pd.DataFrame:
+    """Flatten NECT_RULES into a dataframe for editing."""
+    rows = []
+    for color, periods in rules.items():
+        for period, metrics in periods.items():
+            for metric, bands in metrics.items():
+                for lo, hi, group in bands:
+                    rows.append({
+                        "color": color,
+                        "period": period,
+                        "metric": metric,
+                        "min": lo,
+                        "max": hi,
+                        "group": group,
+                    })
+    df = pd.DataFrame(rows)
+    df["apply"] = True
+    return df
+
+
+def df_to_nect_rules(df: pd.DataFrame) -> Dict[str, Dict[str, Dict[str, List[Tuple[float, float, int]]]]]:
+    """Build NECT_RULES dict from an edited dataframe."""
+    out: Dict[str, Dict[str, Dict[str, List[Tuple[float, float, int]]]]] = {}
+    df_valid = df[(df.get("apply", True)) & df["color"].notna() & df["period"].notna() & df["metric"].notna()]
+    for color in df_valid["color"].unique():
+        cf = df_valid[df_valid["color"] == color]
+        out[color] = {}
+        for period in cf["period"].unique():
+            pf = cf[cf["period"] == period]
+            out[color][period] = {}
+            for metric in pf["metric"].unique():
+                mf = pf[pf["metric"] == metric]
+                mf = mf.sort_values(by=["min"], ascending=False)
+                bands: List[Tuple[float, float, int]] = []
+                for _, r in mf.iterrows():
+                    if pd.isna(r["min"]) or pd.isna(r["max"]) or pd.isna(r["group"]):
+                        continue
+                    bands.append((float(r["min"]), float(r["max"]), int(r["group"])) )
+                if bands:
+                    out[color][period][metric] = bands
+    return out
+
+
 def segmentacion_app(especie: str):
     """Construye la página de segmentación para una especie específica."""
     # -------------------------------------------------------------------------
@@ -86,143 +217,6 @@ def segmentacion_app(especie: str):
         + [COL_BRIX, COL_ACIDEZ]
         + [c for c in WEIGHT_COLS]
     )
-
-    # -----------------------------------------------------------------------
-    # Reglas originales (copiadas de la versión base).  Estas reglas se
-    # convertirán en dataframes editables para que el usuario pueda
-    # modificarlas en tiempo real.
-    # -----------------------------------------------------------------------
-    DEFAULT_PLUM_RULES: Dict[str, Dict[str, List[Tuple[float, float, int]]]] = {
-        "candy": {
-            COL_BRIX:      [(18.0,  np.inf, 1), (16.0, 18.0, 2), (14.0, 16.0, 3), (-np.inf, 14.0, 4)],
-            "FIRMEZA_PUNTO": [(7.0,  np.inf, 1), (5.0,  7.0, 2), (4.0,  5.0, 3), (-np.inf, 4.0, 4)],
-            "FIRMEZA_MEJ":   [(9.0,  np.inf, 1), (7.0,  9.0, 2), (6.0,  7.0, 3), (-np.inf, 6.0, 4)],
-            COL_ACIDEZ:    [(-np.inf, 0.60, 1), (0.60, 0.81, 2), (0.81, 1.00, 3), (1.00, np.inf, 4)],
-        },
-        "sugar": {
-            COL_BRIX:      [(21.0, np.inf, 1), (18.0, 21.0, 2), (15.0, 18.0, 3), (-np.inf, 15.0, 4)],
-            "FIRMEZA_PUNTO": [(6.0, np.inf, 1), (4.5,  6.0, 2), (3.0,  4.5, 3), (-np.inf, 3.0, 4)],
-            "FIRMEZA_MEJ":   [(8.0, np.inf, 1), (5.0,  8.0, 2), (4.0,  5.0, 3), (-np.inf, 4.0, 4)],
-            COL_ACIDEZ:    [(-np.inf, 0.60, 1), (0.60, 0.81, 2), (0.81, 1.00, 3), (1.00, np.inf, 4)],
-        },
-    }
-
-    def _mk_nec_rules(
-        brix1: float, brix2: float, brix3: float,
-        mej_1: float, mej_2: float,
-    ) -> Dict[str, List[Tuple[float, float, int]]]:
-        """Helper: genera tabla estándar Nectarín."""
-        return {
-            COL_BRIX: [(brix1, np.inf, 1), (brix2, brix1, 2), (brix3, brix2, 3), (-np.inf, brix3, 4)],
-            "FIRMEZA_PUNTO": [(9.0, np.inf, 1), (8.0, 9.0, 2), (7.0, 8.0, 3), (-np.inf, 7.0, 4)],
-            "FIRMEZA_MEJ": [(mej_1, np.inf, 1), (mej_2, mej_1, 2), (9.0, mej_2, 3), (-np.inf, 9.0, 4)],
-            COL_ACIDEZ: [(-np.inf, 0.60, 1), (0.60, 0.81, 2), (0.81, 1.00, 3), (1.00, np.inf, 4)],
-        }
-
-    DEFAULT_NECT_RULES: Dict[str, Dict[str, Dict[str, List[Tuple[float, float, int]]]]] = {
-        "amarilla": {
-            "muy_temprana": _mk_nec_rules(13.0, 10.0, 9.0, 14.0, 12.0),
-            "temprana":      _mk_nec_rules(13.0, 10.0, 9.0, 14.0, 12.0),
-            "tardia":        _mk_nec_rules(14.0, 12.0, 10.0, 14.0, 12.0),
-        },
-        "blanca": {
-            "muy_temprana": _mk_nec_rules(13.0, 10.0, 9.0, 13.0, 11.0),
-            "temprana":      _mk_nec_rules(13.0, 10.0, 9.0, 13.0, 11.0),
-            "tardia":        _mk_nec_rules(14.0, 12.0, 10.0, 13.0, 11.0),
-        },
-    }
-
-    PERIOD_MAP = {
-        "muy_temprana": "muy_temprana",
-        "temprana": "temprana",
-        "media": "temprana",
-        "tardia": "tardia",
-        "sin_fecha": "tardia",
-    }
-
-    # -----------------------------------------------------------------------
-    # Utilities for converting rules to/from DataFrames
-    # -----------------------------------------------------------------------
-    def plum_rules_to_df(rules: Dict[str, Dict[str, List[Tuple[float, float, int]]]]) -> pd.DataFrame:
-        """Flatten PLUM_RULES into a dataframe for editing."""
-        rows = []
-        for subtype, metrics in rules.items():
-            for metric, bands in metrics.items():
-                for lo, hi, group in bands:
-                    rows.append({
-                        "subtype": subtype,
-                        "metric": metric,
-                        "min": lo,
-                        "max": hi,
-                        "group": group,
-                    })
-        df = pd.DataFrame(rows)
-        # Añadir columna apply para permitir activar/desactivar reglas
-        df["apply"] = True
-        return df
-
-    def df_to_plum_rules(df: pd.DataFrame) -> Dict[str, Dict[str, List[Tuple[float, float, int]]]]:
-        """Build PLUM_RULES dict from an edited dataframe."""
-        out: Dict[str, Dict[str, List[Tuple[float, float, int]]]] = {}
-        # Filtrar filas válidas: apply=True y campos obligatorios no nulos
-        df_valid = df[(df.get("apply", True)) & df["subtype"].notna() & df["metric"].notna()]
-        for subtype in df_valid["subtype"].unique():
-            sub = df_valid[df_valid["subtype"] == subtype]
-            out[subtype] = {}
-            for metric in sub["metric"].unique():
-                mdf = sub[sub["metric"] == metric]
-                # sort by min descending so highest band appears first
-                mdf = mdf.sort_values(by=["min"], ascending=False)
-                bands: List[Tuple[float, float, int]] = []
-                for _, r in mdf.iterrows():
-                    # saltar filas con campos nulos
-                    if pd.isna(r["min"]) or pd.isna(r["max"]) or pd.isna(r["group"]):
-                        continue
-                    bands.append((float(r["min"]), float(r["max"]), int(r["group"])) )
-                if bands:
-                    out[subtype][metric] = bands
-        return out
-
-    def nect_rules_to_df(rules: Dict[str, Dict[str, Dict[str, List[Tuple[float, float, int]]]]]) -> pd.DataFrame:
-        """Flatten NECT_RULES into a dataframe for editing."""
-        rows = []
-        for color, periods in rules.items():
-            for period, metrics in periods.items():
-                for metric, bands in metrics.items():
-                    for lo, hi, group in bands:
-                        rows.append({
-                            "color": color,
-                            "period": period,
-                            "metric": metric,
-                            "min": lo,
-                            "max": hi,
-                            "group": group,
-                        })
-        df = pd.DataFrame(rows)
-        df["apply"] = True
-        return df
-
-    def df_to_nect_rules(df: pd.DataFrame) -> Dict[str, Dict[str, Dict[str, List[Tuple[float, float, int]]]]]:
-        """Build NECT_RULES dict from an edited dataframe."""
-        out: Dict[str, Dict[str, Dict[str, List[Tuple[float, float, int]]]]] = {}
-        df_valid = df[(df.get("apply", True)) & df["color"].notna() & df["period"].notna() & df["metric"].notna()]
-        for color in df_valid["color"].unique():
-            cf = df_valid[df_valid["color"] == color]
-            out[color] = {}
-            for period in cf["period"].unique():
-                pf = cf[cf["period"] == period]
-                out[color][period] = {}
-                for metric in pf["metric"].unique():
-                    mf = pf[pf["metric"] == metric]
-                    mf = mf.sort_values(by=["min"], ascending=False)
-                    bands: List[Tuple[float, float, int]] = []
-                    for _, r in mf.iterrows():
-                        if pd.isna(r["min"]) or pd.isna(r["max"]) or pd.isna(r["group"]):
-                            continue
-                        bands.append((float(r["min"]), float(r["max"]), int(r["group"])) )
-                    if bands:
-                        out[color][period][metric] = bands
-        return out
 
     # -----------------------------------------------------------------------
     # Procesamiento de datos (igual que en la versión base excepto por el uso
