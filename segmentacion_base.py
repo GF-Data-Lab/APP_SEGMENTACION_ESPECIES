@@ -187,6 +187,12 @@ def segmentacion_app(especie: str):
         unsafe_allow_html=True
     )
 
+    # Normalizar el nombre de la especie para que coincida con las etiquetas del
+    # archivo de datos.  El usuario puede ingresar "Nectarina" pero en el Excel
+    # la especie está registrada como "Nectarin".
+    especie_key = "Nectarin" if especie.lower().startswith("nect") else "Ciruela"
+    titulo_especie = "Nectarina" if especie_key == "Nectarin" else "Ciruela"
+
     # -------------------------------------------------------------------------
     # Parámetros y constantes
     # -------------------------------------------------------------------------
@@ -201,7 +207,7 @@ def segmentacion_app(especie: str):
     VAR_COLUMN = "Variedad"
     FRUTO_COLUMN = "Fruto (n°)"
 
-    ESPECIES_VALIDAS = {especie}
+    ESPECIES_VALIDAS = {especie_key}
 
     WEIGHT_COLS = ("Peso (g)", "Calibre", "Peso")
     COL_FIRMEZA_PUNTO = ("Quilla", "Hombro","Punta")
@@ -369,8 +375,6 @@ def segmentacion_app(especie: str):
                 dt = pd.to_datetime(val, dayfirst=False, errors="coerce")
             except Exception:
                 dt = pd.NaT
-        if not pd.isna(dt) and dt.month not in [8,9,10,11,12,1,2]:
-            return pd.NaT
         return dt
 
     def process_carozos(
@@ -554,7 +558,6 @@ def segmentacion_app(especie: str):
 
     generar_menu()
 
-    titulo_especie = "Nectarina" if especie.lower().startswith("nect") else "Ciruela"
     st.title(f"🛠️ Segmentación {titulo_especie}")
     st.write(
         """
@@ -580,7 +583,7 @@ def segmentacion_app(especie: str):
     if "default_period" not in st.session_state:
         st.session_state["default_period"] = "tardia"
 
-    if especie == "Ciruela":
+    if especie_key == "Ciruela":
         default_plum = st.selectbox(
             "Tipo de ciruela por defecto si el peso no está disponible",
             options=["sugar", "candy"],
@@ -594,7 +597,7 @@ def segmentacion_app(especie: str):
             value=float(st.session_state["sugar_upper"]),
             step=1.0,
         )
-    elif especie.lower().startswith("nect"):
+    elif especie_key == "Nectarin":
         st.session_state["default_color"] = st.selectbox(
             "Color de pulpa por defecto para Nectarina (si falta)",
             options=["Amarilla", "Blanca"],
@@ -671,7 +674,7 @@ def segmentacion_app(especie: str):
         3: '#ffaaa5',  # coral
         4: '#ff8b94',  # rojo rosado
     }
-    especie_seleccion = especie
+    especie_seleccion = especie_key
     if especie_seleccion == "Ciruela":
         subtipo_sel = st.selectbox("Sub‑tipo de ciruela", list(current_plum_rules.keys()))
         metrica_sel = st.selectbox("Métrica", list(current_plum_rules[subtipo_sel].keys()))
@@ -801,7 +804,7 @@ def segmentacion_app(especie: str):
     # -----------------------------------------------------------------------
     # Obtención del archivo cargado previamente
     # -----------------------------------------------------------------------
-    if especie in ("Nectarin", "Ciruela"):
+    if especie_key in ("Nectarin", "Ciruela"):
         df_upload = st.session_state.get("carozos_df")
         file_label = "carozos"
     else:
@@ -818,7 +821,7 @@ def segmentacion_app(especie: str):
     tmp_df = df_upload.copy()
     # Filtrar por especie para evitar mezclar datasets
     if ESPECIE_COLUMN in tmp_df.columns:
-        tmp_df = tmp_df[tmp_df[ESPECIE_COLUMN] == especie].copy()
+        tmp_df = tmp_df[tmp_df[ESPECIE_COLUMN] == especie_key].copy()
 
     # Convertir fechas
     if DATE_COLUMN in tmp_df.columns:
