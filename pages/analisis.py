@@ -60,6 +60,15 @@ numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
 bins  = [0, 4,  8,   12,  16]                  # límites (0 para incluir 1)
 labels = ["Top 1", "Top 2", "Top 3", "Top 4"]   # etiquetas
 
+# Garantizar que exista la columna utilizada para la clasificación.
+# Cuando el dataframe proviene directamente del cargador de archivos
+# puede no incluir ``cond_sum_grp``; en ese caso añadimos la columna con
+# valores nulos para evitar errores y convertirla a numérica si es necesario.
+if "cond_sum_grp" not in df.columns:
+    st.warning("No se encontró la columna 'cond_sum_grp'. Se crearán valores nulos para continuar.")
+    df["cond_sum_grp"] = np.nan
+
+df["cond_sum_grp"] = pd.to_numeric(df["cond_sum_grp"], errors="coerce")
 df["rankid"] = pd.cut(
     df["cond_sum_grp"],
     bins=bins,
