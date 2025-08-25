@@ -317,20 +317,6 @@ def segmentacion_app(especie: str):
             return _classify_value(row[col], rule_dict)
         return np.nan
 
-    def _assign_clusters(series: pd.Series, max_clusters: int = 4) -> pd.Series:
-        """Asignar etiquetas de cluster de forma robusta.
-
-        Usa el ranking de los valores para evitar problemas con valores
-        repetidos y permite hasta *max_clusters* grupos. Si la serie tiene
-        menos de 2 valores distintos, devuelve NaN.
-        """
-        ranks = series.rank(method="first")
-        unique = ranks.nunique()
-        q = min(max_clusters, int(unique))
-        if q < 2:
-            return pd.Series(np.nan, index=series.index)
-        return pd.qcut(ranks, q, labels=range(1, q + 1))
-
     def _harvest_period_a(ts: pd.Timestamp | float | str) -> str:
         ts = pd.to_datetime(ts, errors="coerce")
         if pd.isna(ts):
@@ -1050,7 +1036,14 @@ def segmentacion_app(especie: str):
               .reset_index()
           )
           agg_groups["cond_sum_grp"] = cond_agg.values
-          agg_groups["cluster_grp"] = _assign_clusters(agg_groups["cond_sum_grp"])
+          if agg_groups["cond_sum_grp"].notna().nunique() >= 4:
+              try:
+                  bins = pd.qcut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
+              except ValueError:
+                  bins = pd.cut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
+          else:
+              bins = pd.Series(np.nan, index=agg_groups.index)
+          agg_groups["cluster_grp"] = bins
           # Calcular agregados por variedad (sin distinguir fruto ni periodo)
           if grp_method == "mean":
               cond_agg_var = df_processed.groupby(VAR_COLUMN, dropna=False)["cond_sum"].mean()
@@ -1074,7 +1067,14 @@ def segmentacion_app(especie: str):
               .reset_index()
           )
           agg_variedad["cond_sum_grp"] = cond_agg_var.values
-          agg_variedad["cluster_grp"] = _assign_clusters(agg_variedad["cond_sum_grp"])
+          if agg_variedad["cond_sum_grp"].notna().nunique() >= 4:
+              try:
+                  bins_var = pd.qcut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
+              except ValueError:
+                  bins_var = pd.cut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
+          else:
+              bins_var = pd.Series(np.nan, index=agg_variedad.index)
+          agg_variedad["cluster_grp"] = bins_var
 
           # Clasificación agregada por métricas basándose en los promedios del grupo
           # Construir un mapa con información de sub‑tipo y color para cada grupo
@@ -1135,8 +1135,15 @@ def segmentacion_app(especie: str):
               agg_groups['cond_sum_metric'] = agg_groups[metric_groups].mean(axis=1, skipna=True)
           else:
               agg_groups['cond_sum_metric'] = agg_groups[metric_groups].sum(axis=1, min_count=1)
-          agg_groups['cluster_grp'] = _assign_clusters(agg_groups['cond_sum_metric'])
           agg_groups['cond_sum_grp'] = agg_groups['cond_sum_metric']
+          if agg_groups['cond_sum_grp'].notna().nunique() >= 4:
+              try:
+                  bins_metric = pd.qcut(agg_groups['cond_sum_grp'], 4, labels=[1,2,3,4])
+              except ValueError:
+                  bins_metric = pd.cut(agg_groups['cond_sum_grp'], 4, labels=[1,2,3,4])
+          else:
+              bins_metric = pd.Series(np.nan, index=agg_groups.index)
+          agg_groups['cluster_grp'] = bins_metric
 
           # ------------------------------------------------------------------
           # Clusterización opcional (KMeans u otro algoritmo)
