@@ -338,37 +338,45 @@ with tab7:
     # ——— Ciruela: plum_subtype ———
     st.markdown("#### 2.a. Estadísticas Numéricas en Ciruela por Subtipo")
     df_ciru = df[df["Especie"] == "Ciruela"]
-    st.dataframe(
-        df_ciru.groupby("plum_subtype")[numeric_cols]
-              .describe()
-              .T,
-        use_container_width=True
-    )
 
-    st.markdown("#### 2.b. Boxplots en Ciruela por Subtipo")
-    for col in numeric_cols:
-        fig = px.box(
-            df_ciru, x="plum_subtype", y=col, points="outliers",
-            title=f"{col} por Subtipo en Ciruela"
+    if "plum_subtype" in df_ciru.columns:
+        st.dataframe(
+            df_ciru.groupby("plum_subtype")[numeric_cols]
+                  .describe()
+                  .T,
+            use_container_width=True,
         )
-        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("#### 2.b. Boxplots en Ciruela por Subtipo")
+        for col in numeric_cols:
+            fig = px.box(
+                df_ciru, x="plum_subtype", y=col, points="outliers",
+                title=f"{col} por Subtipo en Ciruela",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("No se encontró la columna 'plum_subtype' para Ciruela")
 
     st.markdown("---")
 
     # ——— Nectarina: Color de pulpa ———
     st.markdown("#### 2.c. Estadísticas Numéricas en Nectarina por Color de Pulpa")
     df_nec = df[df["Especie"] == "Nectarin"]
-    st.dataframe(
-        df_nec.groupby("Color de pulpa")[numeric_cols]
-              .describe()
-              .T,
-        use_container_width=True
-    )
 
-    st.markdown("#### 2.d. Boxplots en Nectarina por Color de Pulpa")
-    for col in numeric_cols:
-        fig = px.box(
-            df_nec, x="Color de pulpa", y=col, points="outliers",
-            title=f"{col} por Color de Pulpa en Nectarina"
+    if "Color de pulpa" in df_nec.columns:
+        st.dataframe(
+            df_nec.groupby("Color de pulpa")[numeric_cols]
+                  .describe()
+                  .T,
+            use_container_width=True,
         )
-        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("#### 2.d. Boxplots en Nectarina por Color de Pulpa")
+        for col in numeric_cols:
+            fig = px.box(
+                df_nec, x="Color de pulpa", y=col, points="outliers",
+                title=f"{col} por Color de Pulpa en Nectarina",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("No se encontró la columna 'Color de pulpa' para Nectarina")
