@@ -28,21 +28,27 @@ def generarMenu():
         # Crear los botones debajo del logo en la barra lateral
         boton_inicio = st.button('Página de Inicio 🏚️')
         boton_carga = st.button('Carga de archivos 📁')
+        boton_defaults = st.button('Valores por defecto ⚙️')
+        boton_bandas = st.button('Bandas por indicador 🎯')
         boton_ciruela = st.button('Segmentación Ciruela 🍑')
         boton_nectarina = st.button('Segmentación Nectarina 🍑')
-        boton_cluster = st.button('Modelo de Clasificación')
-        boton_analisis = st.button('Análisis exploratorio')
+        boton_modelo = st.button('Modelo y clustering 🧠')
+        boton_analisis = st.button('Análisis exploratorio 🔍')
     # Acción de los botones: redirigir a la página correspondiente
     if boton_inicio:
         st.switch_page('app.py')  # Redirige a la página principal
     if boton_carga:
         st.switch_page('pages/carga_datos.py')
+    if boton_defaults:
+        st.switch_page('pages/default_values.py')
+    if boton_bandas:
+        st.switch_page('pages/bandas_indicador.py')
     if boton_ciruela:
         st.switch_page('pages/segmentacion_ciruela.py')
     if boton_nectarina:
         st.switch_page('pages/segmentacion_nectarina.py')
-    if boton_cluster:
-        st.switch_page('pages/Cluster_especies.py')
+    if boton_modelo:
+        st.switch_page('pages/modelo_cluster.py')
     if boton_analisis:
         st.switch_page('pages/analisis.py')
 
@@ -50,5 +56,5 @@ def generarMenu():
 generarMenu()
 
 # Título en la página principal
-st.title("Bienvenido a la aplicación de Segmentación de Especies")
+st.title("Bienvenido a la aplicación de análisis de especies")
 

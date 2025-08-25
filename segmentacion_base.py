@@ -1144,6 +1144,43 @@ def segmentacion_app(especie: str):
           agg_groups['cluster_grp'] = _assign_clusters(agg_groups['cond_sum_metric'])
           agg_groups['cond_sum_grp'] = agg_groups['cond_sum_metric']
 
+          # ------------------------------------------------------------------
+          # Clusterización opcional (KMeans u otro algoritmo)
+          # ------------------------------------------------------------------
+          with st.expander("Clusterización automática", expanded=False):
+              cluster_algo = st.selectbox(
+                  "Algoritmo", ["Ninguno", "KMeans", "Agglomerative"], key="cluster_algo"
+              )
+              n_clusters = st.number_input(
+                  "Número de clusters", min_value=2, max_value=10, value=4, key="cluster_n"
+              )
+              run_cluster = st.button("Ejecutar", key="run_cluster_btn")
+              if run_cluster and cluster_algo != "Ninguno":
+                  from sklearn.preprocessing import StandardScaler
+                  from sklearn.cluster import KMeans, AgglomerativeClustering
+
+                  features_cluster = [
+                      "promedio_cond_sum",
+                      "promedio_brix",
+                      "promedio_acidez",
+                      "promedio_firmeza_punto",
+                      "promedio_mejillas",
+                  ]
+                  X = agg_groups[features_cluster].fillna(0)
+                  scaler_c = StandardScaler()
+                  X_scaled = scaler_c.fit_transform(X)
+                  if cluster_algo == "KMeans":
+                      model = KMeans(n_clusters=int(n_clusters), random_state=42)
+                  else:
+                      model = AgglomerativeClustering(n_clusters=int(n_clusters))
+                  labels = model.fit_predict(X_scaled) + 1
+                  agg_groups["cluster_auto"] = labels
+                  st.success("Clusterización completada")
+                  diff = agg_groups[agg_groups["cluster_auto"] != agg_groups["cluster_grp"]]
+                  if not diff.empty:
+                      st.markdown("##### Diferencias entre clusters")
+                      st.dataframe(diff, use_container_width=True, height=200)
+
           # Determinar el punto de firmeza más bajo por cluster y repetirlo
           agg_groups['punto_firmeza_cluster'] = agg_groups['punto_firmeza_min']
           for clus, grp in agg_groups.groupby('cluster_grp'):
@@ -1165,53 +1202,91 @@ def segmentacion_app(especie: str):
               if row.get('periodo_inconsistente'):
                   return ['background-color: #ffd6d6;' for _ in row]
               return ['' for _ in row]
+          # Mostrar siempre la agrupación por reglas y, si existe, comparar con
+          # la clusterización automática ejecutada (KMeans u otro algoritmo)
+          if "cluster_auto" in agg_groups.columns:
+              st.markdown("#### Comparación de clusters (reglas vs automático)")
+              subset_cols = ["cluster_grp", "cluster_auto"]
+          else:
+              st.markdown("#### Segmentación por reglas")
+              subset_cols = ["cluster_grp"]
+
           styled_agg = (
               agg_groups.style
-              .applymap(color_cluster, subset=["cluster_grp"])
+              .applymap(color_cluster, subset=subset_cols)
               .apply(highlight_inconsistent, axis=1)
           )
           st.dataframe(styled_agg, use_container_width=True, height=400)
 
-          # Gráfico de las combinaciones en dos dimensiones (PCA)
-          st.markdown("#### Distribución PCA de los grupos")
-          try:
-              # Importaciones necesarias para el gráfico PCA
-              from sklearn.preprocessing import StandardScaler
-              from sklearn.decomposition import PCA
-              import altair as alt
-              # Seleccionamos las características numéricas para el análisis
-              pca_features = [
-                  "promedio_cond_sum",
-                  "promedio_brix",
-                  "promedio_acidez",
-                  "promedio_firmeza_punto",
-                  "promedio_mejillas",
-              ]
-              df_features = agg_groups[pca_features].fillna(0)
-              # Normalizamos
-              scaler = StandardScaler()
-              X_scaled = scaler.fit_transform(df_features)
-              pca = PCA(n_components=2)
-              pcs = pca.fit_transform(X_scaled)
-              agg_groups["PC1"] = pcs[:, 0]
-              agg_groups["PC2"] = pcs[:, 1]
-              # Construir gráfico interactivo con Altair
-              color_scale = alt.Scale(domain=[1,2,3,4], range=[group_colors[1], group_colors[2], group_colors[3], group_colors[4]])
-              chart = (
-                  alt.Chart(agg_groups)
-                  .mark_circle(size=80)
-                  .encode(
-                      x=alt.X("PC1", title="Componente principal 1"),
-                      y=alt.Y("PC2", title="Componente principal 2"),
-                      color=alt.Color("cluster_grp:N", scale=color_scale, legend=alt.Legend(title="Cluster")),
-                      tooltip=[ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period', 'cluster_grp', 'promedio_acidez']
+          # ------------------------------------------------------------------
+          # Visualizaciones: PCA de agregados o datos granulares
+          # ------------------------------------------------------------------
+          st.markdown("#### Visualización de resultados")
+          viz_mode = st.radio(
+              "Tipo de gráfico", ["Agregado (PCA)", "Granular"], key="viz_mode"
+          )
+          if viz_mode == "Agregado (PCA)":
+              try:
+                  from sklearn.preprocessing import StandardScaler
+                  from sklearn.decomposition import PCA
+                  import altair as alt
+                  pca_features = [
+                      "promedio_cond_sum",
+                      "promedio_brix",
+                      "promedio_acidez",
+                      "promedio_firmeza_punto",
+                      "promedio_mejillas",
+                  ]
+                  df_features = agg_groups[pca_features].fillna(0)
+                  scaler = StandardScaler()
+                  X_scaled = scaler.fit_transform(df_features)
+                  pcs = PCA(n_components=2).fit_transform(X_scaled)
+                  agg_groups["PC1"] = pcs[:, 0]
+                  agg_groups["PC2"] = pcs[:, 1]
+                  color_col = "cluster_auto" if "cluster_auto" in agg_groups.columns else "cluster_grp"
+                  color_scale = alt.Scale(domain=[1,2,3,4], range=[group_colors[1], group_colors[2], group_colors[3], group_colors[4]])
+                  chart = (
+                      alt.Chart(agg_groups)
+                      .mark_circle(size=80)
+                      .encode(
+                          x=alt.X("PC1", title="Componente principal 1"),
+                          y=alt.Y("PC2", title="Componente principal 2"),
+                          color=alt.Color(f"{color_col}:N", scale=color_scale, legend=alt.Legend(title="Cluster")),
+                          tooltip=[ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period', color_col, 'promedio_acidez']
+                      )
+                      .properties(width='container', height=400)
+                      .interactive()
                   )
-                  .properties(width='container', height=400)
-                  .interactive()
-              )
-              st.altair_chart(chart, use_container_width=True)
-          except Exception as e:
-              st.info(f"No fue posible generar el gráfico PCA: {e}")
+                  st.altair_chart(chart, use_container_width=True)
+              except Exception as e:
+                  st.info(f"No fue posible generar el gráfico PCA: {e}")
+          else:
+              try:
+                  import altair as alt
+                  numeric_cols = [
+                      "cond_sum",
+                      COL_BRIX,
+                      COL_ACIDEZ,
+                      "Firmeza punto valor",
+                      "avg_mejillas",
+                  ]
+                  x_col = st.selectbox("Eje X", numeric_cols, key="gran_x")
+                  y_col = st.selectbox("Eje Y", numeric_cols, index=1, key="gran_y")
+                  chart = (
+                      alt.Chart(df_processed)
+                      .mark_circle(size=60)
+                      .encode(
+                          x=alt.X(x_col, title=x_col),
+                          y=alt.Y(y_col, title=y_col),
+                          color=alt.Color("cluster_row:N", legend=alt.Legend(title="Cluster")),
+                          tooltip=[ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period', 'cluster_row']
+                      )
+                      .properties(width='container', height=400)
+                      .interactive()
+                  )
+                  st.altair_chart(chart, use_container_width=True)
+              except Exception as e:
+                  st.info(f"No fue posible generar el gráfico granular: {e}")
 
           # Mostrar agregados por variedad (sin separar fruto ni periodo)
           st.markdown("### Agregados por variedad")
