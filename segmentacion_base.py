@@ -1202,9 +1202,15 @@ def segmentacion_app(especie: str):
               if row.get('periodo_inconsistente'):
                   return ['background-color: #ffd6d6;' for _ in row]
               return ['' for _ in row]
-          subset_cols = ["cluster_grp"]
+          # Mostrar siempre la agrupación por reglas y, si existe, comparar con
+          # la clusterización automática ejecutada (KMeans u otro algoritmo)
           if "cluster_auto" in agg_groups.columns:
-              subset_cols.append("cluster_auto")
+              st.markdown("#### Comparación de clusters (reglas vs automático)")
+              subset_cols = ["cluster_grp", "cluster_auto"]
+          else:
+              st.markdown("#### Segmentación por reglas")
+              subset_cols = ["cluster_grp"]
+
           styled_agg = (
               agg_groups.style
               .applymap(color_cluster, subset=subset_cols)
