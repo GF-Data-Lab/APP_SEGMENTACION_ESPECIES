@@ -29,13 +29,13 @@ def generar_menu():
             st.switch_page('app.py')
         if st.button('Carga de archivos 📁'):
             st.switch_page('pages/carga_datos.py')
-        if st.button('Valores por defecto ⚙️'):
-            st.switch_page('pages/default_values.py')
-        if st.button('Bandas por indicador 🎯'):
-            st.switch_page('pages/bandas_indicador.py')
-        if st.button('Modelo y clustering 🧠'):
-            st.switch_page('pages/modelo_cluster.py')
-        if st.button('Análisis exploratorio 🔍'):
+        if st.button('Segmentación Ciruela 🍑'):
+            st.switch_page('pages/segmentacion_ciruela.py')
+        if st.button('Segmentación Nectarina 🍑'):
+            st.switch_page('pages/segmentacion_nectarina.py')
+        if st.button('Modelo de Clasificación'):
+            st.switch_page('pages/Cluster_especies.py')
+        if st.button('Análisis exploratorio'):
             st.switch_page('pages/analisis.py')
 
 
@@ -44,7 +44,7 @@ def main():
     generar_menu()
 
     st.title("Carga de datos")
-    st.write("Sube los archivos Excel que se utilizarán en las diferentes páginas de análisis.")
+    st.write("Sube los archivos Excel que se utilizarán en las páginas de segmentación.")
 
     carozos_file = st.file_uploader("Archivo de carozos", type=["xls", "xlsx"], key="upload_carozos")
     if carozos_file is not None:
