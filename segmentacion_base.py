@@ -29,6 +29,77 @@ import altair as alt
 from utils import show_logo
 
 
+def load_excel_with_headers_detection(file_path: Union[str, Path], sheet_name: str, usecols: str = None) -> pd.DataFrame:
+    """
+    Carga un archivo Excel detectando automáticamente dónde están los encabezados.
+    
+    Args:
+        file_path: Ruta al archivo Excel o objeto de archivo
+        sheet_name: Nombre de la hoja
+        usecols: Columnas a leer (ej: "A:AP")
+    
+    Returns:
+        DataFrame con los encabezados correctamente detectados
+    """
+    try:
+        # Primero, leer las primeras filas sin skiprows para encontrar encabezados
+        preview_df = pd.read_excel(file_path, sheet_name=sheet_name, usecols=usecols, nrows=10, dtype=str)
+        
+        # Buscar la fila que probablemente contenga los encabezados
+        # Los encabezados usualmente tienen más texto y menos nulos
+        header_row = 0
+        max_non_null = 0
+        
+        for i in range(min(5, len(preview_df))):  # Revisar las primeras 5 filas
+            non_null_count = preview_df.iloc[i].notna().sum()
+            # También verificar que no sean solo números (que serían datos, no encabezados)
+            text_count = sum(1 for val in preview_df.iloc[i] if isinstance(str(val), str) and len(str(val)) > 2)
+            
+            if non_null_count > max_non_null and text_count > non_null_count * 0.3:
+                max_non_null = non_null_count
+                header_row = i
+        
+        # Si no encontramos encabezados convincentes en las primeras filas, usar la primera
+        if max_non_null < 3:
+            header_row = 0
+            
+        # Ahora cargar el archivo completo usando la fila de encabezados detectada
+        df = pd.read_excel(
+            file_path,
+            sheet_name=sheet_name,
+            usecols=usecols,
+            header=header_row,
+            dtype=str
+        )
+        
+        # Limpiar encabezados: eliminar espacios extra, convertir a string
+        cleaned_columns = [str(col).strip() if col is not None else f"Column_{i}" for i, col in enumerate(df.columns)]
+        
+        # Manejar columnas duplicadas
+        seen_columns = {}
+        final_columns = []
+        
+        for col in cleaned_columns:
+            if col in seen_columns:
+                seen_columns[col] += 1
+                final_columns.append(f"{col}_{seen_columns[col]}")
+            else:
+                seen_columns[col] = 0
+                final_columns.append(col)
+        
+        df.columns = final_columns
+        
+        # Filtrar filas vacías después de los encabezados
+        df = df.dropna(how='all')
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"Error al cargar el archivo Excel: {e}")
+        # Fallback: intentar con la configuración original
+        return pd.read_excel(file_path, sheet_name=sheet_name, usecols=usecols, skiprows=2, dtype=str)
+
+
 # ----------------------------------------------------------------------
 # Bandas por defecto y utilidades de conversión disponibles a nivel de
 # módulo para que otras páginas puedan reutilizarlas.
@@ -410,18 +481,13 @@ def segmentacion_app(especie: str):
         grp_method: str = "mean",
         fpd_vars: Sequence[str] | None = None,
         mejillas_method: str = "media",
+        selected_metrics: List[str] = None,
     ) -> pd.DataFrame:
         # Permitir que el parámetro file sea un DataFrame ya cargado
         if isinstance(file, pd.DataFrame):
             df = file.copy()
         else:
-            df = pd.read_excel(
-                file,
-                sheet_name=SHEET_NAME,
-                usecols=USECOLS,
-                skiprows=START_ROW,
-                dtype=str,
-            )
+            df = load_excel_with_headers_detection(file, SHEET_NAME, USECOLS)
         # 1) Filtros y renombres
         df = df[df[ESPECIE_COLUMN].isin(ESPECIES_VALIDAS)].copy()
         df.rename(columns={COL_ORIG_BRIX: COL_BRIX}, inplace=True)
@@ -508,15 +574,38 @@ def segmentacion_app(especie: str):
         )
         # 4) Clasificación de grupos usando las reglas configuradas
         # Preparamos una lista de columnas a clasificar con sus alias apropiados
-        cols_to_classify = [
-            ("Firmeza punto valor", "Firmeza_punto_valor"),
-            ("avg_mejillas", "avg_mejillas"),
-            (COL_BRIX, COL_BRIX),
-            (COL_ACIDEZ, COL_ACIDEZ),
+        all_cols_to_classify = [
+            ("Firmeza punto valor", "Firmeza_punto_valor", "Firmeza punto débil"),
+            ("avg_mejillas", "avg_mejillas", "Mejillas"),
+            (COL_BRIX, COL_BRIX, "BRIX"),
+            (COL_ACIDEZ, COL_ACIDEZ, "Acidez (%)"),
         ]
+        
+        # Filtrar columnas según métricas seleccionadas
+        if selected_metrics is None:
+            selected_metrics = ["BRIX", "Acidez (%)", "Firmeza punto débil", "Mejillas"]
+        
+        cols_to_classify = [(col_orig, alias) for col_orig, alias, metric_name in all_cols_to_classify 
+                           if metric_name in selected_metrics]
+        
+        # Clasificación especial para acidez: usar primer valor por combinación
+        grp_keys_acid = [ESPECIE_COLUMN, VAR_COLUMN, "harvest_period"]
+        
         for col_orig, alias in cols_to_classify:
             out = f"grp_{alias}"
-            df[out] = df.apply(lambda r, c=col_orig: _classify_row(r, c, rules_plum, rules_nect), axis=1)
+            
+            if col_orig == COL_ACIDEZ:
+                # Para acidez, usar el primer valor de cada combinación especie-variedad-temporada
+                first_acid_values = df.groupby(grp_keys_acid)[COL_ACIDEZ].first().reset_index()
+                first_acid_values[out] = first_acid_values.apply(
+                    lambda r: _classify_row(r, COL_ACIDEZ, rules_plum, rules_nect), axis=1
+                )
+                # Hacer merge para propagar el valor a todas las filas de la combinación
+                df = df.merge(first_acid_values[grp_keys_acid + [out]], 
+                             on=grp_keys_acid, how='left')
+            else:
+                # Para otras métricas, clasificación normal
+                df[out] = df.apply(lambda r, c=col_orig: _classify_row(r, c, rules_plum, rules_nect), axis=1)
         # 7) Cluster individual
         grp_cols = [c for c in df.columns if c.startswith("grp_")]
         # 7) Cluster individual: cálculo de cond_sum según el método elegido
@@ -697,58 +786,109 @@ def segmentacion_app(especie: str):
         return
 
     # -------------------------------------------------------------------
-    # Detección de outliers antes del procesamiento
+    # Detección de outliers antes del procesamiento (solo si no hay datos procesados)
     # -------------------------------------------------------------------
-    tmp_df = df_upload.copy()
-    # Filtrar por especie para evitar mezclar datasets
-    if ESPECIE_COLUMN in tmp_df.columns:
-        tmp_df = tmp_df[tmp_df[ESPECIE_COLUMN] == especie_key].copy()
+    process_key = f"processed_data_{especie_key}"
+    outliers_key = f"outliers_data_{especie_key}"
+    
+    # Si ya hay datos procesados, omitir la detección de outliers para mejorar rendimiento
+    if process_key not in st.session_state:
+        if outliers_key not in st.session_state:
+            # Procesar outliers solo la primera vez
+            tmp_df = df_upload.copy()
+            # Filtrar por especie para evitar mezclar datasets
+            if ESPECIE_COLUMN in tmp_df.columns:
+                tmp_df = tmp_df[tmp_df[ESPECIE_COLUMN] == especie_key].copy()
 
-    # Convertir fechas
-    if DATE_COLUMN in tmp_df.columns:
-        tmp_df[DATE_COLUMN] = tmp_df[DATE_COLUMN].apply(_safe_parse_date)
-        idx_nectar = tmp_df[ESPECIE_COLUMN] == "Nectarin"
-        color_series = (
-            tmp_df.get(COLOR_COLUMN, pd.Series("", index=tmp_df.index))
-                  .fillna("")
-                  .astype(str)
-                  .str.strip()
-                  .str.lower()
-        )
-        idx_blanca = idx_nectar & color_series.str.startswith("blanc")
-        tmp_df["harvest_period"] = "Period sin_fecha"
-        tmp_df.loc[idx_blanca, "harvest_period"] = tmp_df.loc[idx_blanca, DATE_COLUMN].apply(_harvest_period_b)
-        tmp_df.loc[idx_nectar & ~idx_blanca, "harvest_period"] = tmp_df.loc[idx_nectar & ~idx_blanca, DATE_COLUMN].apply(_harvest_period_a)
+            # Convertir fechas
+            if DATE_COLUMN in tmp_df.columns:
+                tmp_df[DATE_COLUMN] = tmp_df[DATE_COLUMN].apply(_safe_parse_date)
+                idx_nectar = tmp_df[ESPECIE_COLUMN] == "Nectarin"
+                color_series = (
+                    tmp_df.get(COLOR_COLUMN, pd.Series("", index=tmp_df.index))
+                      .fillna("")
+                      .astype(str)
+                      .str.strip()
+                      .str.lower()
+                )
+                idx_blanca = idx_nectar & color_series.str.startswith("blanc")
+                tmp_df["harvest_period"] = "Period sin_fecha"
+                tmp_df.loc[idx_blanca, "harvest_period"] = tmp_df.loc[idx_blanca, DATE_COLUMN].apply(_harvest_period_b)
+                tmp_df.loc[idx_nectar & ~idx_blanca, "harvest_period"] = tmp_df.loc[idx_nectar & ~idx_blanca, DATE_COLUMN].apply(_harvest_period_a)
+            else:
+                tmp_df["harvest_period"] = "Period sin_fecha"
+            
+            _to_numeric(tmp_df, NUMERIC_COLS)
+            # Detección de outliers por especie, variedad y muestra (|z| > 2)
+            # Nota: harvest_period aún no existe en este punto, se crea después
+            # Solo usar columnas que existen en el DataFrame
+            available_group_cols = [col for col in [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN] if col in tmp_df.columns]
+            if not available_group_cols:
+                # Si no hay columnas de agrupación disponibles, usar índice
+                available_group_cols = [tmp_df.index.name] if tmp_df.index.name else ['index']
+                if 'index' not in tmp_df.columns:
+                    tmp_df['index'] = tmp_df.index
+            group_cols = available_group_cols
+            outlier_cols = {}
+            for col in [c for c in NUMERIC_COLS if c in tmp_df.columns]:
+                def _zscore(s: pd.Series) -> pd.Series:
+                    m = s.mean()
+                    sd = s.std()
+                    if sd == 0 or pd.isna(sd):
+                        return pd.Series(np.nan, index=s.index)
+                    return (s - m) / sd
+                z = tmp_df.groupby(group_cols, dropna=False)[col].transform(_zscore)
+                mask = z.abs() > 2
+                outlier_cols[col] = mask.fillna(False)
+                tmp_df[f"Outlier_{col}"] = outlier_cols[col]
+            tmp_df["Outlier"] = pd.DataFrame(outlier_cols).any(axis=1) if outlier_cols else False
+            
+            # Guardar datos de outliers en session_state para evitar recalcular
+            st.session_state[outliers_key] = tmp_df
+        else:
+            # Recuperar datos de outliers del caché
+            tmp_df = st.session_state[outliers_key]
     else:
-        tmp_df["harvest_period"] = "Period sin_fecha"
-    _to_numeric(tmp_df, NUMERIC_COLS)
-    # Detección de outliers por especie, variedad, muestra y periodo (|z| > 2)
-    group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, "harvest_period"]
-    outlier_cols = {}
-    for col in [c for c in NUMERIC_COLS if c in tmp_df.columns]:
-        def _zscore(s: pd.Series) -> pd.Series:
-            m = s.mean()
-            sd = s.std()
-            if sd == 0 or pd.isna(sd):
-                return pd.Series(np.nan, index=s.index)
-            return (s - m) / sd
-        z = tmp_df.groupby(group_cols, dropna=False)[col].transform(_zscore)
-        mask = z.abs() > 2
-        outlier_cols[col] = mask.fillna(False)
-        tmp_df[f"Outlier_{col}"] = outlier_cols[col]
-    tmp_df["Outlier"] = pd.DataFrame(outlier_cols).any(axis=1) if outlier_cols else False
-    st.markdown("### Previsualización y edición del archivo cargado")
-    st.write("Se detectan outliers por especie, variedad, muestra y periodo usando ±2 desviaciones estándar. Las celdas marcadas en rojo indican outliers.")
-    # Construir tabla de outliers con media de grupo para cada métrica
+        # Si hay datos procesados, usar el dataframe original simplificado
+        tmp_df = df_upload.copy()
+        if ESPECIE_COLUMN in tmp_df.columns:
+            tmp_df = tmp_df[tmp_df[ESPECIE_COLUMN] == especie_key].copy()
+        tmp_df["Outlier"] = False  # No mostrar outliers si ya hay datos procesados
+    
+    # Inicializar outlier_rows para evitar UnboundLocalError
     outlier_rows = []
+    
+    # Solo mostrar sección de outliers si no hay datos procesados
+    if process_key not in st.session_state:
+        st.markdown("### Previsualización y edición del archivo cargado")
+        st.write("Se detectan outliers por especie, variedad, muestra y periodo usando ±2 desviaciones estándar. Las celdas marcadas en rojo indican outliers.")
     # Calcular medias de grupo para cada columna numérica
-    group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period']
+    # Usar harvest_period solo si existe en el dataframe
+    # Solo usar columnas que existen en el DataFrame
+    available_base_cols = [col for col in [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN] if col in tmp_df.columns]
+    if not available_base_cols:
+        # Si no hay columnas de agrupación disponibles, usar índice
+        available_base_cols = [tmp_df.index.name] if tmp_df.index.name else ['index']
+        if 'index' not in tmp_df.columns:
+            tmp_df['index'] = tmp_df.index
+    
+    if 'harvest_period' in tmp_df.columns:
+        group_cols = available_base_cols + ['harvest_period']
+    else:
+        group_cols = available_base_cols
+    # Asegurar conversión numérica antes de calcular medias
+    _to_numeric(tmp_df, NUMERIC_COLS)
+    
     group_means = {}
     for col in [c for c in NUMERIC_COLS if c in tmp_df.columns]:
         group_means[col] = tmp_df.groupby(group_cols)[col].transform('mean')
         tmp_df[f'Mean_{col}'] = group_means[col]
         # crear fila por outlier
-        flagged = tmp_df[tmp_df.get(f'Outlier_{col}', False)]
+        outlier_col = f'Outlier_{col}'
+        if outlier_col in tmp_df.columns:
+            flagged = tmp_df[tmp_df[outlier_col] == True]
+        else:
+            flagged = pd.DataFrame()  # DataFrame vacío si no existe la columna
         for idx, r in flagged.iterrows():
             outlier_rows.append({
                 'index': idx,
@@ -844,6 +984,27 @@ def segmentacion_app(especie: str):
     )
     # Configuración de cálculo para cond_sum y cluster grupal
     st.subheader("Configuración de cálculo de clusters")
+    
+    # Selector de métricas para clustering
+    st.markdown("#### Selección de métricas para clustering")
+    available_metrics = ["BRIX", "Acidez (%)", "Firmeza punto débil", "Mejillas"]
+    
+    # Inicializar selección por defecto si no existe
+    if "selected_cluster_metrics" not in st.session_state:
+        st.session_state["selected_cluster_metrics"] = available_metrics
+    
+    selected_metrics = st.multiselect(
+        "Selecciona las métricas que se usarán para el cálculo del cluster:",
+        options=available_metrics,
+        default=st.session_state.get("selected_cluster_metrics", available_metrics),
+        key="selected_cluster_metrics",
+        help="Solo las métricas seleccionadas se usarán para calcular los grupos de cluster"
+    )
+    
+    if not selected_metrics:
+        st.warning("⚠️ Debes seleccionar al menos una métrica para el clustering.")
+        selected_metrics = available_metrics
+    
     col_conf1, col_conf2 = st.columns(2)
     with col_conf1:
         cond_method = st.selectbox(
@@ -857,26 +1018,102 @@ def segmentacion_app(especie: str):
           options=["mean", "mode"],
           key="cluster_grp_method"
         )
+    # Inicializar clave de procesamiento en session_state
+    process_key = f"processed_data_{especie_key}"
+    
     if st.button("Procesar datos editados y clasificar"):
         # Procesar utilizando el DataFrame editado
-        try:
-          df_processed = process_carozos(
-              edited_df,
-              current_plum_rules,
-              current_nect_rules,
-              cond_method,
-              grp_method,
-              fpd_vars=st.session_state.get("fpd_vars"),
-              mejillas_method=st.session_state.get("mejillas_method"),
-          )
-        except Exception as e:
-          st.error(f"Error al procesar el archivo: {e}")
-          df_processed = None
-        if df_processed is not None:
-          st.success("¡Procesamiento completado con éxito! 🎉")
+        with st.spinner("Procesando datos..."):
+            try:
+              df_processed = process_carozos(
+                  edited_df,
+                  current_plum_rules,
+                  current_nect_rules,
+                  cond_method,
+                  grp_method,
+                  fpd_vars=st.session_state.get("fpd_vars"),
+                  mejillas_method=st.session_state.get("mejillas_method"),
+                  selected_metrics=selected_metrics,
+              )
+              # Guardar en session_state para evitar reprocesamiento
+              st.session_state[process_key] = {
+                  'df_processed': df_processed,
+                  'cond_method': cond_method,
+                  'grp_method': grp_method,
+                  'current_plum_rules': current_plum_rules,
+                  'current_nect_rules': current_nect_rules,
+                  'selected_metrics': selected_metrics
+              }
+              st.success("¡Procesamiento completado con éxito! 🎉")
+            except Exception as e:
+              st.error(f"Error al procesar el archivo: {e}")
+              df_processed = None
+    
+    # Verificar si hay datos procesados disponibles en session_state
+    if process_key in st.session_state:
+        processed_data = st.session_state[process_key]
+        df_processed = processed_data['df_processed']
+        cond_method = processed_data['cond_method']
+        grp_method = processed_data['grp_method']
+        current_plum_rules = processed_data['current_plum_rules']
+        current_nect_rules = processed_data['current_nect_rules']
+        selected_metrics = processed_data.get('selected_metrics', available_metrics)
+        
+        # Botón para limpiar datos procesados
+        if st.button("🔄 Limpiar resultados y reprocesar"):
+            if process_key in st.session_state:
+                del st.session_state[process_key]
+            st.rerun()
+            
+    else:
+        df_processed = None
+        
+    if df_processed is not None:
+          # Mostrar indicador de que hay datos procesados disponibles
+          if process_key in st.session_state:
+              metrics_used = ", ".join(selected_metrics) if selected_metrics else "Todas"
+              st.info(f"📊 Mostrando resultados procesados guardados.\n\n**Métricas usadas para clustering**: {metrics_used}\n\nUsa el botón '🔄 Limpiar resultados' si quieres reprocesar con nuevos parámetros.")
+          
           # Visualización de la tabla completa con posibilidad de filtrar por variedad
           st.markdown("### Tabla completa de resultados")
-          st.dataframe(df_processed, use_container_width=True)
+          
+          # Crear lista de columnas relevantes para el análisis
+          essential_cols = [
+              ESPECIE_COLUMN,
+              VAR_COLUMN,
+              FRUTO_COLUMN,
+              "harvest_period",
+              COL_BRIX,
+              COL_ACIDEZ,
+              "Firmeza punto valor",
+              "avg_mejillas",
+              "cluster_row",
+              "cluster_grp",
+              "cond_sum",
+              "cond_sum_grp",
+              "rankid"
+          ]
+          
+          # Agregar columnas grp_ que existen
+          grp_cols = [col for col in df_processed.columns if col.startswith("grp_")]
+          essential_cols.extend(grp_cols)
+          
+          # Filtrar solo columnas que existen en el dataframe y tienen datos significativos
+          available_cols = []
+          for col in essential_cols:
+              if col in df_processed.columns:
+                  # Para grp_acidez siempre incluirla (usa primer valor)
+                  if col == "grp_Acidez (%)" or col.endswith("acidez"):
+                      available_cols.append(col)
+                  # Para otras columnas, verificar que no sean todas nulas
+                  elif not df_processed[col].isna().all():
+                      available_cols.append(col)
+          
+          # Mostrar dataframe con columnas filtradas
+          df_display = df_processed[available_cols].copy()
+          st.dataframe(df_display, use_container_width=True)
+          
+          st.info(f"💡 Mostrando {len(available_cols)} columnas relevantes de {len(df_processed.columns)} totales.")
           if st.button("Guardar dataframe procesado"):
               st.session_state["df_seg_especies"] = df_processed
               st.success("DataFrame guardado para otras páginas.")
@@ -925,8 +1162,19 @@ def segmentacion_app(especie: str):
                   bins = pd.qcut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
               except ValueError:
                   bins = pd.cut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
+          elif agg_groups["cond_sum_grp"].notna().sum() >= 2:
+              # Si tenemos al menos 2 valores, crear 2 clusters
+              try:
+                  bins = pd.qcut(agg_groups["cond_sum_grp"], 2, labels=[1,2])
+              except ValueError:
+                  bins = pd.cut(agg_groups["cond_sum_grp"], 2, labels=[1,2])
+          elif agg_groups["cond_sum_grp"].notna().sum() >= 1:
+              # Si tenemos al menos 1 valor, asignar cluster 1 a los válidos
+              bins = pd.Series(1, index=agg_groups.index)
+              bins[agg_groups["cond_sum_grp"].isna()] = np.nan
           else:
-              bins = pd.Series(np.nan, index=agg_groups.index)
+              # Si no hay valores válidos, asignar cluster 1 a todos
+              bins = pd.Series(1, index=agg_groups.index)
           agg_groups["cluster_grp"] = bins
           # Calcular agregados por variedad (sin distinguir fruto ni periodo)
           if grp_method == "mean":
@@ -1056,10 +1304,13 @@ def segmentacion_app(especie: str):
                       # Si cut también falla, asignar cluster 1 a todos
                       bins_metric = pd.Series(1, index=agg_groups.index)
                       bins_metric[agg_groups['cond_sum_grp'].isna()] = np.nan
-          else:
-              # Fallback: asignar cluster 1 a todos los registros válidos
+          elif unique_values >= 1:
+              # Si tenemos al menos 1 valor único, asignar cluster 1 a los válidos
               bins_metric = pd.Series(1, index=agg_groups.index)
               bins_metric[agg_groups['cond_sum_grp'].isna()] = np.nan
+          else:
+              # Fallback: asignar cluster 1 a todos los registros
+              bins_metric = pd.Series(1, index=agg_groups.index)
           agg_groups['cluster_grp'] = bins_metric
 
           # Determinar el punto de firmeza más bajo por cluster y repetirlo
@@ -1084,43 +1335,59 @@ def segmentacion_app(especie: str):
                   return ['background-color: #ffd6d6;' for _ in row]
               return ['' for _ in row]
 
+          # Controles de visualización al principio
+          st.markdown("### 📊 Opciones de Visualización")
+          show_variety_table = st.checkbox("Mostrar tabla agregados por variedad", value=False, key="show_variety")
+          show_group_table = st.checkbox("Mostrar tabla agregados por grupo", value=False, key="show_group")
+          
+          # Selector de métricas para clasificación
+          st.markdown("### ⚙️ Configuración de Clasificación")
+          all_numeric_cols = [col for col in agg_groups.columns if pd.api.types.is_numeric_dtype(agg_groups[col]) and not col.startswith('PC') and col != 'cluster_grp']
+          
+          selected_classification_metrics = st.multiselect(
+              "Selecciona métricas para la clasificación:",
+              options=all_numeric_cols,
+              default=all_numeric_cols[:4] if len(all_numeric_cols) >= 4 else all_numeric_cols,
+              key="classification_metrics",
+              help="Estas métricas se usarán para calcular los clusters de clasificación"
+          )
+          
+          if selected_classification_metrics and selected_classification_metrics != available_metrics:
+              st.info("💡 Las métricas seleccionadas se aplicarán en la próxima ejecución de segmentación")
+
           # Mostrar siempre la agrupación por reglas y, si existe, comparar con
           # la clusterización automática ejecutada (KMeans u otro algoritmo).
           # Solo se muestran las columnas consideradas relevantes para el
-          # usuario final.
+          # usuario final - Solo columnas esenciales para el análisis
           display_cols = [
-              ESPECIE_COLUMN,
               VAR_COLUMN,
-              FRUTO_COLUMN,
-              "harvest_period",
-              "muestras",
-              "promedio_cond_sum",
+              "cluster_grp",
               "promedio_brix",
               "promedio_acidez",
               "promedio_firmeza_punto",
-              "promedio_mejillas",
-              "cond_sum_grp",
-              "cluster_grp",
           ]
-          if "cluster_auto" in agg_groups.columns:
-              st.markdown("#### Comparación de clusters (reglas vs automático)")
-              display_cols.append("cluster_auto")
-              subset_cols = ["cluster_grp", "cluster_auto"]
-          else:
-              st.markdown("#### Segmentación por reglas")
-              subset_cols = ["cluster_grp"]
+          
+          # Mostrar tabla de agregados por grupo - condicional
+          if show_group_table:
+              if "cluster_auto" in agg_groups.columns:
+                  st.markdown("#### Comparación de clusters (reglas vs automático)")
+                  display_cols.append("cluster_auto")
+                  subset_cols = ["cluster_grp", "cluster_auto"]
+              else:
+                  st.markdown("#### Segmentación por reglas")
+                  subset_cols = ["cluster_grp"]
 
-          styled_agg = (
-              agg_groups[display_cols]
-              .style
-              .map(color_cluster, subset=[c for c in subset_cols if c in display_cols]))
-          styled_agg = (
-              agg_groups.style
-              .map(color_cluster, subset=["cluster_grp"])
+              styled_agg = (
+                  agg_groups[display_cols]
+                  .style
+                  .map(color_cluster, subset=[c for c in subset_cols if c in display_cols]))
+              styled_agg = (
+                  agg_groups.style
+                  .map(color_cluster, subset=["cluster_grp"])
 
-              .apply(highlight_inconsistent, axis=1)
-          )
-          st.dataframe(styled_agg, use_container_width=True, height=400)
+                  .apply(highlight_inconsistent, axis=1)
+              )
+              st.dataframe(styled_agg, use_container_width=True, height=400)
 
           # Gráfico de las combinaciones en dos dimensiones (PCA)
           st.markdown("#### Distribución PCA de los grupos")
@@ -1223,26 +1490,125 @@ def segmentacion_app(especie: str):
               st.altair_chart(chart, use_container_width=True)
               st.success("Gráfico PCA generado exitosamente!")
               
+              # Agregar gráfico por cluster de datos agregados
+              st.markdown("#### Análisis por Cluster")
+              if len(valid_clusters) > 0:
+                  
+                  # Selector de métrica para visualizar por cluster
+                  available_numeric_cols = [col for col in agg_groups.columns if pd.api.types.is_numeric_dtype(agg_groups[col]) and col not in ['PC1', 'PC2', 'cluster_grp']]
+                  selected_metric = st.selectbox(
+                      "Métrica a visualizar por cluster:",
+                      options=available_numeric_cols,
+                      index=0 if available_numeric_cols else None,
+                      key="cluster_metric_viz"
+                  )
+                  
+                  if selected_metric:
+                      # Gráfico de barras por cluster
+                      cluster_summary = agg_groups.groupby('cluster_grp')[selected_metric].agg(['mean', 'count']).reset_index()
+                      cluster_summary.columns = ['Cluster', 'Promedio', 'Cantidad']
+                      
+                      fig_cluster = alt.Chart(cluster_summary).mark_bar().encode(
+                          x=alt.X('Cluster:O', title='Cluster'),
+                          y=alt.Y('Promedio:Q', title=f'Promedio de {selected_metric}'),
+                          color=alt.Color('Cluster:O', scale=alt.Scale(range=[group_colors.get(int(c), '#cccccc') for c in valid_clusters])),
+                          tooltip=['Cluster:O', 'Promedio:Q', 'Cantidad:Q']
+                      ).properties(
+                          width='container',
+                          height=300,
+                          title=f'{selected_metric} por Cluster'
+                      )
+                      
+                      st.altair_chart(fig_cluster, use_container_width=True)
+                      
+                      # Tabla resumen por cluster
+                      if st.checkbox("Mostrar resumen estadístico por cluster", key="show_cluster_stats"):
+                          cluster_detailed = agg_groups.groupby('cluster_grp')[available_numeric_cols].agg(['mean', 'std', 'count']).round(2)
+                          st.markdown("**Estadísticas por cluster:**")
+                          st.dataframe(cluster_detailed, use_container_width=True)
+                      
+                      # Visualización K-means
+                      st.markdown("#### Clustering K-means Comparativo")
+                      if st.checkbox("Mostrar análisis K-means automático", key="show_kmeans"):
+                          try:
+                              from sklearn.cluster import KMeans
+                              from sklearn.metrics import silhouette_score
+                              
+                              # Seleccionar número de clusters para K-means
+                              n_clusters_kmeans = st.slider("Número de clusters K-means:", 2, 6, len(valid_clusters), key="n_clusters_kmeans")
+                              
+                              # Usar las mismas métricas que para PCA
+                              X_kmeans = agg_groups[available_numeric_cols].fillna(0)
+                              
+                              if len(X_kmeans) >= n_clusters_kmeans:
+                                  # Aplicar K-means
+                                  kmeans = KMeans(n_clusters=n_clusters_kmeans, random_state=42)
+                                  kmeans_labels = kmeans.fit_predict(X_kmeans)
+                                  
+                                  # Calcular silhouette score
+                                  sil_score = silhouette_score(X_kmeans, kmeans_labels) if len(set(kmeans_labels)) > 1 else 0
+                                  
+                                  # Mostrar métricas
+                                  col1, col2 = st.columns(2)
+                                  with col1:
+                                      st.metric("Silhouette Score K-means", f"{sil_score:.3f}")
+                                  with col2:
+                                      st.metric("Inercia K-means", f"{kmeans.inertia_:.3f}")
+                                  
+                                  # Crear DataFrame con resultados K-means
+                                  agg_kmeans = agg_groups.copy()
+                                  agg_kmeans['cluster_kmeans'] = kmeans_labels
+                                  
+                                  # Gráfico PCA con clusters K-means
+                                  kmeans_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'][:n_clusters_kmeans]
+                                  
+                                  fig_kmeans = alt.Chart(agg_kmeans.dropna(subset=['PC1', 'PC2'])).mark_circle(size=80).encode(
+                                      x=alt.X("PC1", title="Componente principal 1"),
+                                      y=alt.Y("PC2", title="Componente principal 2"),
+                                      color=alt.Color("cluster_kmeans:O", 
+                                                    scale=alt.Scale(range=kmeans_colors),
+                                                    legend=alt.Legend(title="Cluster K-means")),
+                                      tooltip=[col for col in [VAR_COLUMN, 'cluster_grp', 'cluster_kmeans'] if col in agg_kmeans.columns]
+                                  ).properties(
+                                      width='container',
+                                      height=400,
+                                      title=f'PCA con K-means (k={n_clusters_kmeans})'
+                                  ).interactive()
+                                  
+                                  st.altair_chart(fig_kmeans, use_container_width=True)
+                                  
+                                  # Comparación entre clusters por reglas y K-means
+                                  if st.checkbox("Comparar clusters: Reglas vs K-means", key="compare_clusters"):
+                                      comparison_df = agg_kmeans.groupby(['cluster_grp', 'cluster_kmeans']).size().reset_index(name='count')
+                                      comparison_pivot = comparison_df.pivot(index='cluster_grp', columns='cluster_kmeans', values='count').fillna(0)
+                                      
+                                      st.markdown("**Matriz de confusión: Clusters por reglas vs K-means**")
+                                      st.dataframe(comparison_pivot, use_container_width=True)
+                              else:
+                                  st.warning("No hay suficientes datos para el número de clusters seleccionado.")
+                          except Exception as e:
+                              st.error(f"Error en análisis K-means: {e}")
+              
           except Exception as e:
               st.error(f"Error generando el gráfico PCA: {e}")
               import traceback
               st.text("Traceback:")
               st.code(traceback.format_exc())
 
-          # Mostrar agregados por variedad (sin separar fruto ni periodo)
-          st.markdown("### Agregados por variedad")
-          cols_variedad = [
-              VAR_COLUMN,
-              "muestras",
-              "promedio_cond_sum",
-              "promedio_brix",
-              "promedio_acidez",
-              "promedio_firmeza_punto",
-              "promedio_mejillas",
-              "cond_sum_grp",
-              "cluster_grp",
-          ]
-          st.dataframe(agg_variedad[cols_variedad], use_container_width=True, height=300)
+
+          # Mostrar agregados por variedad (sin separar fruto ni periodo) - condicional
+          if show_variety_table:
+              st.markdown("### Agregados por variedad")
+              # Solo columnas esenciales para el análisis
+              cols_variedad = [
+                  VAR_COLUMN,
+                  "cluster_grp",
+                  "promedio_brix",
+                  "promedio_acidez",
+                  "promedio_firmeza_punto",
+                  "muestras",
+              ]
+              st.dataframe(agg_variedad[cols_variedad], use_container_width=True, height=300)
           # Botón para descargar resultados completos y agregados
           buf = io.BytesIO()
           with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
