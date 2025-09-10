@@ -687,147 +687,9 @@ def segmentacion_app(especie: str):
     current_nect_rules = df_to_nect_rules(st.session_state["nect_rules_df"])
 
     # -----------------------------------------------------------------------
-    # Editor tabular para añadir/eliminar reglas y decidir si se aplican
+    # Configuración de reglas: Las reglas se gestionan ahora desde la página 
+    # "Métricas y Bandas". Esta sección solo carga las reglas del session_state.
     # -----------------------------------------------------------------------
-    # Árbol de decisión para visualizar y editar reglas de forma más intuitiva
-    # -----------------------------------------------------------------------
-    st.subheader("Árbol de decisiones y editor de reglas")
-    st.write(
-        "Selecciona los parámetros (tipo/color/periodo → métrica) para ver y modificar las bandas de cada regla con un código de colores similar al flujograma. Los cambios se reflejan automáticamente en la tabla de reglas."
-    )
-    # Mapa de colores para grupos 1–4 inspirado en el diagrama
-    group_colors = {
-        1: '#a8e6cf',  # verde claro
-        2: '#ffd3b6',  # naranja claro
-        3: '#ffaaa5',  # coral
-        4: '#ff8b94',  # rojo rosado
-    }
-    especie_seleccion = especie_key
-    if especie_seleccion == "Ciruela":
-        subtipo_sel = st.selectbox("Sub‑tipo de ciruela", list(current_plum_rules.keys()))
-        metrica_sel = st.selectbox("Métrica", list(current_plum_rules[subtipo_sel].keys()))
-        # Posibilidad de añadir una nueva métrica para este subtipo
-        with st.expander("Agregar nueva métrica para este sub‑tipo", expanded=False):
-            nueva_metric = st.text_input("Nombre de la nueva métrica", key=f"new_metric_plum_{subtipo_sel}")
-            if st.button("Crear métrica", key=f"create_metric_plum_{subtipo_sel}"):
-                if nueva_metric:
-                    if nueva_metric not in current_plum_rules[subtipo_sel]:
-                        # Definir bandas por defecto: 4 grupos con límites equiespaciados 0,1,2 (el usuario debe ajustarlos)
-                        default_bands = [(-np.inf, 0.0, 4), (0.0, 1.0, 3), (1.0, 2.0, 2), (2.0, np.inf, 1)]
-                        current_plum_rules[subtipo_sel][nueva_metric] = default_bands
-                        # Actualizar DataFrame
-                        st.session_state["plum_rules_df"] = plum_rules_to_df(current_plum_rules)
-                        st.success(f"Métrica '{nueva_metric}' añadida.")
-                        st.warning("La métrica ya existe.")
-                    st.warning("Debes introducir un nombre para la nueva métrica.")
-        bandas = current_plum_rules[subtipo_sel][metrica_sel]
-        # Mostrar bandas con colores
-        bandas_df = pd.DataFrame(bandas, columns=["Min", "Max", "Grupo"])
-        def _apply_colors_plum(row):
-            return [f"background-color: {group_colors.get(int(row['Grupo']), '')}" for _ in row]
-        try:
-            st.write(bandas_df.style.apply(_apply_colors_plum, axis=1))
-        except AttributeError as e:
-            # pandas.DataFrame.style requires jinja2. If it's missing, fall back to
-            # displaying the table without styling and warn the user.
-            if "jinja2" in str(e).lower():
-                st.warning("Instala 'jinja2' para ver la tabla con colores.")
-                st.write(bandas_df)
-                raise
-        # Editor de bandas
-        st.markdown("**Editar bandas**")
-        nuevas_bandas = []
-        for i, (lo, hi, grp) in enumerate(bandas):
-            cols = st.columns([2,2,1])
-            # Asegurarse de que los valores infinitos no causen errores: reemplazar inf por un número grande
-            import math
-            lo_val = float(lo) if math.isfinite(lo) else -1e6
-            hi_val = float(hi) if math.isfinite(hi) else 1e6
-            lo_new = cols[0].number_input(
-                f"Mín banda {i+1}",
-                value=lo_val,
-                key=f"plum_{subtipo_sel}_{metrica_sel}_min_{i}"
-            )
-            hi_new = cols[1].number_input(
-                f"Máx banda {i+1}",
-                value=hi_val,
-                key=f"plum_{subtipo_sel}_{metrica_sel}_max_{i}"
-            )
-            grp_new = cols[2].selectbox(
-                f"Grupo banda {i+1}",
-                options=[1,2,3,4],
-                index=int(grp)-1 if not math.isnan(grp) else 0,
-                key=f"plum_{subtipo_sel}_{metrica_sel}_grp_{i}"
-            )
-            nuevas_bandas.append((lo_new, hi_new, grp_new))
-        # Opción para añadir una nueva banda
-        if st.button("Agregar banda", key=f"add_plum_{subtipo_sel}_{metrica_sel}"):
-            # Añadir una banda con valores por defecto (continuando el último rango)
-            last_hi = nuevas_bandas[-1][1] if nuevas_bandas else 0
-            nuevas_bandas.append((last_hi, last_hi + 1, 4))
-        # Guardar cambios
-        if st.button("Guardar cambios de regla", key=f"save_plum_{subtipo_sel}_{metrica_sel}"):
-            # Actualizar diccionario y DataFrame
-            current_plum_rules[subtipo_sel][metrica_sel] = nuevas_bandas
-            # Convertir a DataFrame y actualizar plum_rules_df en session_state
-            st.session_state["plum_rules_df"] = plum_rules_to_df(current_plum_rules)
-            st.success("Regla actualizada para ciruela.")
-    else:  # Nectarín
-        color_sel = st.selectbox("Color de pulpa", list(current_nect_rules.keys()))
-        periodo_sel = st.selectbox("Periodo de cosecha", list(current_nect_rules[color_sel].keys()))
-        metrica_sel_n = st.selectbox("Métrica", list(current_nect_rules[color_sel][periodo_sel].keys()))
-        # Posibilidad de añadir una nueva métrica para este color/periodo
-        with st.expander("Agregar nueva métrica para este color/periodo", expanded=False):
-            nueva_metric_n = st.text_input(
-                "Nombre de la nueva métrica", key=f"new_metric_nect_{color_sel}_{periodo_sel}"
-            )
-            if st.button("Crear métrica", key=f"create_metric_nect_{color_sel}_{periodo_sel}"):
-                if nueva_metric_n:
-                    if nueva_metric_n not in current_nect_rules[color_sel][periodo_sel]:
-                        default_bands_n = [(-np.inf, 0.0, 4), (0.0, 1.0, 3), (1.0, 2.0, 2), (2.0, np.inf, 1)]
-                        current_nect_rules[color_sel][periodo_sel][nueva_metric_n] = default_bands_n
-                        st.session_state["nect_rules_df"] = nect_rules_to_df(current_nect_rules)
-                        st.success(f"Métrica '{nueva_metric_n}' añadida.")
-                        st.warning("La métrica ya existe.")
-                    st.warning("Debes introducir un nombre para la nueva métrica.")
-        bandas_n = current_nect_rules[color_sel][periodo_sel][metrica_sel_n]
-        # Mostrar bandas con colores
-        bandas_df_n = pd.DataFrame(bandas_n, columns=["Min", "Max", "Grupo"])
-        def _apply_colors_nect(row):
-            return [f"background-color: {group_colors.get(int(row['Grupo']), '')}" for _ in row]
-        st.write(bandas_df_n.style.apply(_apply_colors_nect, axis=1))
-        # Editor de bandas
-        st.markdown("**Editar bandas**")
-        nuevas_bandas_n = []
-        for i, (lo, hi, grp) in enumerate(bandas_n):
-            cols = st.columns([2,2,1])
-            import math
-            lo_val = float(lo) if math.isfinite(lo) else -1e6
-            hi_val = float(hi) if math.isfinite(hi) else 1e6
-            lo_new = cols[0].number_input(
-                f"Mín banda {i+1}",
-                value=lo_val,
-                key=f"nect_{color_sel}_{periodo_sel}_{metrica_sel_n}_min_{i}"
-            )
-            hi_new = cols[1].number_input(
-                f"Máx banda {i+1}",
-                value=hi_val,
-                key=f"nect_{color_sel}_{periodo_sel}_{metrica_sel_n}_max_{i}"
-            )
-            grp_new = cols[2].selectbox(
-                f"Grupo banda {i+1}",
-                options=[1,2,3,4],
-                index=int(grp)-1 if not math.isnan(grp) else 0,
-                key=f"nect_{color_sel}_{periodo_sel}_{metrica_sel_n}_grp_{i}"
-            )
-            nuevas_bandas_n.append((lo_new, hi_new, grp_new))
-        if st.button("Agregar banda", key=f"add_nect_{color_sel}_{periodo_sel}_{metrica_sel_n}"):
-            last_hi = nuevas_bandas_n[-1][1] if nuevas_bandas_n else 0
-            nuevas_bandas_n.append((last_hi, last_hi + 1, 4))
-        if st.button("Guardar cambios de regla", key=f"save_nect_{color_sel}_{periodo_sel}_{metrica_sel_n}"):
-            current_nect_rules[color_sel][periodo_sel][metrica_sel_n] = nuevas_bandas_n
-            st.session_state["nect_rules_df"] = nect_rules_to_df(current_nect_rules)
-            st.success("Regla actualizada para nectarin.")
 
     # -----------------------------------------------------------------------
     # Obtención del archivo cargado previamente
@@ -1259,6 +1121,15 @@ def segmentacion_app(especie: str):
               from sklearn.preprocessing import StandardScaler
               from sklearn.decomposition import PCA
               import altair as alt
+              
+              # Definir colores para grupos 1-4
+              group_colors = {
+                  1: '#a8e6cf',  # verde claro
+                  2: '#ffd3b6',  # naranja claro
+                  3: '#ffaaa5',  # coral
+                  4: '#ff8b94',  # rojo rosado
+              }
+              
               # Seleccionamos las características numéricas para el análisis
               pca_features = [
                   "promedio_cond_sum",
