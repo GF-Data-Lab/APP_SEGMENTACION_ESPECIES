@@ -217,6 +217,18 @@ def segmentacion_app(especie: str):
     COL_ORIG_BRIX = "Solidos solubles (%)"
     COL_BRIX = "BRIX"
     COL_ACIDEZ = "Acidez (%)"
+    
+    # Mapeo de periodos de cosecha 
+    PERIOD_MAP = {
+        "muy temprana": "muy_temprana",
+        "muy_temprana": "muy_temprana",
+        "temprana": "temprana", 
+        "tardia": "tardia",
+        "tardía": "tardia",
+        "sin fecha": "sin_fecha",
+        "sin_fecha": "sin_fecha",
+        "": "sin_fecha"
+    }
 
     NUMERIC_COLS = (
         COL_FIRMEZA_ALL
@@ -457,6 +469,7 @@ def segmentacion_app(especie: str):
             df["Firmeza punto valor"] = fpd_means.min(axis=1)
             # Registrar la columna que dio el mínimo
             df["Firmeza punto columna"] = fpd_means.idxmin(axis=1)
+        else:
             # Usar todas las variables físicas si no se especifican
             fpd_means = df.groupby(grp_keys_fp)[list(COL_FIRMEZA_ALL)].transform('mean')
             df["Firmeza punto valor"] = fpd_means.min(axis=1)
@@ -493,8 +506,12 @@ def segmentacion_app(especie: str):
             df["cond_sum"] = df[grp_cols].sum(axis=1, min_count=1)
         # Discretizar cond_sum en 4 clusters
         if df["cond_sum"].notna().nunique() >= 4:
-            df["cluster_row"] = pd.qcut(df["cond_sum"], 4, labels=[1,2,3,4])
-            df["cluster_row"] = pd.cut(df["cond_sum"], 4, labels=[1,2,3,4])
+            try:
+                df["cluster_row"] = pd.qcut(df["cond_sum"], 4, labels=[1,2,3,4])
+            except ValueError:
+                df["cluster_row"] = pd.cut(df["cond_sum"], 4, labels=[1,2,3,4])
+        else:
+            df["cluster_row"] = pd.Series(np.nan, index=df.index)
         # 8) Cluster grupal (promedio)
         # 8) Cluster grupal (promedio o moda de cond_sum según grp_method)
         if grp_method == "mode":
@@ -516,7 +533,7 @@ def segmentacion_app(especie: str):
             )
         df = df.merge(grp_cond, on=grp_keys, how="left")
         # Discretización de cond_sum_grp en 4 clusters
-        if grp_cond["cond_sum_grp"].notna().nunique() >= 4:
+        if grp_cond["cond_sum_grp"].notna().sum() >= 4:
             try:
                 bins = pd.qcut(grp_cond["cond_sum_grp"], 4, labels=[1,2,3,4])
             except ValueError:
@@ -562,6 +579,10 @@ def segmentacion_app(especie: str):
                 st.switch_page('pages/Cluster_especies.py')
             if st.button('Análisis exploratorio'):
                 st.switch_page('pages/analisis.py')
+            if st.button('Métricas y Bandas 📊'):
+                st.switch_page('pages/metricas_bandas.py')
+            if st.button('Detección Outliers 🎯'):
+                st.switch_page('pages/outliers.py')
 
     generar_menu()
 
@@ -812,14 +833,30 @@ def segmentacion_app(especie: str):
     # Obtención del archivo cargado previamente
     # -----------------------------------------------------------------------
     if especie_key in ("Nectarin", "Ciruela"):
-        df_upload = st.session_state.get("carozos_df")
+        # Verificar si hay datos filtrados disponibles
+        df_filtered = st.session_state.get("carozos_df_filtered")
+        df_upload = df_filtered if df_filtered is not None else st.session_state.get("carozos_df")
         file_label = "carozos"
+        
+        # Mostrar información sobre el tipo de datos usado
+        if df_filtered is not None:
+            st.info(f"📊 Usando datos filtrados: {len(df_filtered)} registros (de {len(st.session_state.get('carozos_df', []))} originales)")
+            if st.button("🔄 Usar datos originales (sin filtros)"):
+                if "carozos_df_filtered" in st.session_state:
+                    del st.session_state["carozos_df_filtered"]
+                st.rerun()
+        else:
+            df_original = st.session_state.get("carozos_df")
+            if df_original is not None:
+                st.info(f"📊 Usando todos los datos originales: {len(df_original)} registros")
     else:
         df_upload = st.session_state.get("cerezas_df")
         file_label = "cerezas"
 
     if df_upload is None:
         st.info(f"No se encontró el archivo de {file_label}. Primero súbelo en la página 'Carga de archivos'.")
+        if st.button("📁 Ir a Carga de archivos"):
+            st.switch_page('pages/carga_datos.py')
         return
 
     # -------------------------------------------------------------------
@@ -1046,7 +1083,7 @@ def segmentacion_app(especie: str):
               .reset_index()
           )
           agg_groups["cond_sum_grp"] = cond_agg.values
-          if agg_groups["cond_sum_grp"].notna().nunique() >= 4:
+          if agg_groups["cond_sum_grp"].notna().sum() >= 4:
               try:
                   bins = pd.qcut(agg_groups["cond_sum_grp"], 4, labels=[1,2,3,4])
               except ValueError:
@@ -1077,7 +1114,7 @@ def segmentacion_app(especie: str):
               .reset_index()
           )
           agg_variedad["cond_sum_grp"] = cond_agg_var.values
-          if agg_variedad["cond_sum_grp"].notna().nunique() >= 4:
+          if agg_variedad["cond_sum_grp"].notna().sum() >= 4:
               try:
                   bins_var = pd.qcut(agg_variedad["cond_sum_grp"], 4, labels=[1,2,3,4])
               except ValueError:

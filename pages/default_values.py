@@ -28,14 +28,18 @@ def generar_menu():
             st.switch_page('app.py')
         if st.button('Carga de archivos 📁'):
             st.switch_page('pages/carga_datos.py')
-        if st.button('Valores por defecto ⚙️'):
-            st.switch_page('pages/default_values.py')
-        if st.button('Bandas por indicador 🎯'):
-            st.switch_page('pages/bandas_indicador.py')
-        if st.button('Modelo y clustering 🧠'):
-            st.switch_page('pages/modelo_cluster.py')
-        if st.button('Análisis exploratorio 🔍'):
+        if st.button('Segmentación Ciruela 🍑'):
+            st.switch_page('pages/segmentacion_ciruela.py')
+        if st.button('Segmentación Nectarina 🍑'):
+            st.switch_page('pages/segmentacion_nectarina.py')
+        if st.button('Modelo de Clasificación'):
+            st.switch_page('pages/Cluster_especies.py')
+        if st.button('Análisis exploratorio'):
             st.switch_page('pages/analisis.py')
+        if st.button('Métricas y Bandas 📊'):
+            st.switch_page('pages/metricas_bandas.py')
+        if st.button('Detección Outliers 🎯'):
+            st.switch_page('pages/outliers.py')
 
 
 def main():

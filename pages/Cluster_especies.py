@@ -59,6 +59,10 @@ def generarMenu():
             st.switch_page('pages/Cluster_especies.py')
         if st.button('Análisis exploratorio'):
             st.switch_page('pages/analisis.py')
+        if st.button('Métricas y Bandas 📊'):
+            st.switch_page('pages/metricas_bandas.py')
+        if st.button('Detección Outliers 🎯'):
+            st.switch_page('pages/outliers.py')
 generarMenu()
 
 st.title("🧪 Modelo de Clasificación de Variedad")
