@@ -43,7 +43,14 @@ def load_excel_with_headers_detection(file_path: Union[str, Path], sheet_name: s
     """
     try:
         # Primero, leer las primeras filas sin skiprows para encontrar encabezados
-        preview_df = pd.read_excel(file_path, sheet_name=sheet_name, usecols=usecols, nrows=10, dtype=str)
+        try:
+            preview_df = pd.read_excel(file_path, sheet_name=sheet_name, usecols=usecols, nrows=10, dtype=str)
+        except UnicodeDecodeError:
+            # Si hay problemas de codificación, intentar con diferentes engines
+            try:
+                preview_df = pd.read_excel(file_path, sheet_name=sheet_name, usecols=usecols, nrows=10, dtype=str, engine='openpyxl')
+            except:
+                preview_df = pd.read_excel(file_path, sheet_name=sheet_name, usecols=usecols, nrows=10, dtype=str, engine='xlrd')
         
         # Buscar la fila que probablemente contenga los encabezados
         # Los encabezados usualmente tienen más texto y menos nulos
@@ -64,16 +71,54 @@ def load_excel_with_headers_detection(file_path: Union[str, Path], sheet_name: s
             header_row = 0
             
         # Ahora cargar el archivo completo usando la fila de encabezados detectada
-        df = pd.read_excel(
-            file_path,
-            sheet_name=sheet_name,
-            usecols=usecols,
-            header=header_row,
-            dtype=str
-        )
+        try:
+            df = pd.read_excel(
+                file_path,
+                sheet_name=sheet_name,
+                usecols=usecols,
+                header=header_row,
+                dtype=str
+            )
+        except UnicodeDecodeError:
+            # Si hay problemas de codificación, intentar con diferentes engines
+            try:
+                df = pd.read_excel(
+                    file_path,
+                    sheet_name=sheet_name,
+                    usecols=usecols,
+                    header=header_row,
+                    dtype=str,
+                    engine='openpyxl'
+                )
+            except:
+                # Último intento con xlrd
+                df = pd.read_excel(
+                    file_path,
+                    sheet_name=sheet_name,
+                    usecols=usecols,
+                    header=header_row,
+                    dtype=str,
+                    engine='xlrd'
+                )
         
-        # Limpiar encabezados: eliminar espacios extra, convertir a string
-        cleaned_columns = [str(col).strip() if col is not None else f"Column_{i}" for i, col in enumerate(df.columns)]
+        # Limpiar encabezados: eliminar espacios extra, convertir a string, manejar encoding
+        def safe_str_clean(col, i):
+            try:
+                if col is None:
+                    return f"Column_{i}"
+                # Convertir a string de forma segura
+                if isinstance(col, bytes):
+                    try:
+                        col_str = col.decode('utf-8')
+                    except UnicodeDecodeError:
+                        col_str = col.decode('latin-1', errors='ignore')
+                else:
+                    col_str = str(col)
+                return col_str.strip()
+            except:
+                return f"Column_{i}"
+        
+        cleaned_columns = [safe_str_clean(col, i) for i, col in enumerate(df.columns)]
         
         # Manejar columnas duplicadas
         seen_columns = {}
@@ -91,6 +136,27 @@ def load_excel_with_headers_detection(file_path: Union[str, Path], sheet_name: s
         
         # Filtrar filas vacías después de los encabezados
         df = df.dropna(how='all')
+        
+        # Limpiar valores de celdas con problemas de encoding
+        def safe_cell_clean(val):
+            if val is None or pd.isna(val):
+                return val
+            try:
+                if isinstance(val, bytes):
+                    try:
+                        return val.decode('utf-8')
+                    except UnicodeDecodeError:
+                        return val.decode('latin-1', errors='ignore')
+                return str(val)
+            except:
+                return str(val) if val is not None else val
+        
+        # Aplicar limpieza a todas las celdas de texto
+        for col in df.columns:
+            try:
+                df[col] = df[col].apply(safe_cell_clean)
+            except:
+                continue
         
         return df
         
@@ -1433,13 +1499,25 @@ def segmentacion_app(especie: str):
                   st.warning("Columna 'cluster_grp' no encontrada.")
                   agg_groups['cluster_grp'] = 1  # Valor por defecto
               
-              # Definir colores para grupos 1-4
+              # Definir colores para grupos 1-4 (1=Muy Bueno=Verde)
               group_colors = {
-                  1: '#a8e6cf',  # verde claro
-                  2: '#ffd3b6',  # naranja claro
-                  3: '#ffaaa5',  # coral
-                  4: '#ff8b94',  # rojo rosado
+                  1: '#4CAF50',  # Verde fuerte - Muy bueno
+                  2: '#8BC34A',  # Verde claro - Bueno
+                  3: '#FF9800',  # Naranja - Regular
+                  4: '#F44336',  # Rojo - Malo
               }
+              
+              # Mostrar leyenda de colores de clusters
+              st.markdown("#### Interpretación de Clusters")
+              col1, col2, col3, col4 = st.columns(4)
+              with col1:
+                  st.markdown(f'<div style="background-color: {group_colors[1]}; padding: 10px; border-radius: 5px; text-align: center; color: white; font-weight: bold;">Cluster 1: Muy Bueno</div>', unsafe_allow_html=True)
+              with col2:
+                  st.markdown(f'<div style="background-color: {group_colors[2]}; padding: 10px; border-radius: 5px; text-align: center; color: white; font-weight: bold;">Cluster 2: Bueno</div>', unsafe_allow_html=True)
+              with col3:
+                  st.markdown(f'<div style="background-color: {group_colors[3]}; padding: 10px; border-radius: 5px; text-align: center; color: white; font-weight: bold;">Cluster 3: Regular</div>', unsafe_allow_html=True)
+              with col4:
+                  st.markdown(f'<div style="background-color: {group_colors[4]}; padding: 10px; border-radius: 5px; text-align: center; color: white; font-weight: bold;">Cluster 4: Malo</div>', unsafe_allow_html=True)
               
               # Normalizamos
               scaler = StandardScaler()
@@ -1537,55 +1615,72 @@ def segmentacion_app(especie: str):
                               # Seleccionar número de clusters para K-means
                               n_clusters_kmeans = st.slider("Número de clusters K-means:", 2, 6, len(valid_clusters), key="n_clusters_kmeans")
                               
-                              # Usar las mismas métricas que para PCA
-                              X_kmeans = agg_groups[available_numeric_cols].fillna(0)
+                              # Usar las métricas seleccionadas por el usuario para K-means
+                              # Mapear nombres de métricas seleccionadas a columnas en agg_groups
+                              metric_to_col_map = {
+                                  "BRIX": "promedio_brix",
+                                  "Acidez (%)": "promedio_acidez", 
+                                  "Firmeza punto débil": "promedio_firmeza_punto",
+                                  "Mejillas": "promedio_mejillas"
+                              }
                               
-                              if len(X_kmeans) >= n_clusters_kmeans:
-                                  # Aplicar K-means
-                                  kmeans = KMeans(n_clusters=n_clusters_kmeans, random_state=42)
-                                  kmeans_labels = kmeans.fit_predict(X_kmeans)
-                                  
-                                  # Calcular silhouette score
-                                  sil_score = silhouette_score(X_kmeans, kmeans_labels) if len(set(kmeans_labels)) > 1 else 0
-                                  
-                                  # Mostrar métricas
-                                  col1, col2 = st.columns(2)
-                                  with col1:
-                                      st.metric("Silhouette Score K-means", f"{sil_score:.3f}")
-                                  with col2:
-                                      st.metric("Inercia K-means", f"{kmeans.inertia_:.3f}")
-                                  
-                                  # Crear DataFrame con resultados K-means
-                                  agg_kmeans = agg_groups.copy()
-                                  agg_kmeans['cluster_kmeans'] = kmeans_labels
-                                  
-                                  # Gráfico PCA con clusters K-means
-                                  kmeans_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'][:n_clusters_kmeans]
-                                  
-                                  fig_kmeans = alt.Chart(agg_kmeans.dropna(subset=['PC1', 'PC2'])).mark_circle(size=80).encode(
-                                      x=alt.X("PC1", title="Componente principal 1"),
-                                      y=alt.Y("PC2", title="Componente principal 2"),
-                                      color=alt.Color("cluster_kmeans:O", 
-                                                    scale=alt.Scale(range=kmeans_colors),
-                                                    legend=alt.Legend(title="Cluster K-means")),
-                                      tooltip=[col for col in [VAR_COLUMN, 'cluster_grp', 'cluster_kmeans'] if col in agg_kmeans.columns]
-                                  ).properties(
-                                      width='container',
-                                      height=400,
-                                      title=f'PCA con K-means (k={n_clusters_kmeans})'
-                                  ).interactive()
-                                  
-                                  st.altair_chart(fig_kmeans, use_container_width=True)
-                                  
-                                  # Comparación entre clusters por reglas y K-means
-                                  if st.checkbox("Comparar clusters: Reglas vs K-means", key="compare_clusters"):
-                                      comparison_df = agg_kmeans.groupby(['cluster_grp', 'cluster_kmeans']).size().reset_index(name='count')
-                                      comparison_pivot = comparison_df.pivot(index='cluster_grp', columns='cluster_kmeans', values='count').fillna(0)
-                                      
-                                      st.markdown("**Matriz de confusión: Clusters por reglas vs K-means**")
-                                      st.dataframe(comparison_pivot, use_container_width=True)
+                              selected_cols_kmeans = []
+                              for metric in selected_metrics:
+                                  if metric in metric_to_col_map and metric_to_col_map[metric] in agg_groups.columns:
+                                      selected_cols_kmeans.append(metric_to_col_map[metric])
+                              
+                              if not selected_cols_kmeans:
+                                  st.warning("No se encontraron columnas válidas para K-means con las métricas seleccionadas")
                               else:
-                                  st.warning("No hay suficientes datos para el número de clusters seleccionado.")
+                                  st.write(f"**Debug K-means**: Usando columnas: {selected_cols_kmeans}")
+                                  X_kmeans = agg_groups[selected_cols_kmeans].fillna(0)
+                              
+                                  if len(X_kmeans) >= n_clusters_kmeans:
+                                      # Aplicar K-means
+                                      kmeans = KMeans(n_clusters=n_clusters_kmeans, random_state=42)
+                                      kmeans_labels = kmeans.fit_predict(X_kmeans)
+                                      
+                                      # Calcular silhouette score
+                                      sil_score = silhouette_score(X_kmeans, kmeans_labels) if len(set(kmeans_labels)) > 1 else 0
+                                      
+                                      # Mostrar métricas
+                                      col1, col2 = st.columns(2)
+                                      with col1:
+                                          st.metric("Silhouette Score K-means", f"{sil_score:.3f}")
+                                      with col2:
+                                          st.metric("Inercia K-means", f"{kmeans.inertia_:.3f}")
+                                      
+                                      # Crear DataFrame con resultados K-means
+                                      agg_kmeans = agg_groups.copy()
+                                      agg_kmeans['cluster_kmeans'] = kmeans_labels
+                                      
+                                      # Gráfico PCA con clusters K-means
+                                      kmeans_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'][:n_clusters_kmeans]
+                                      
+                                      fig_kmeans = alt.Chart(agg_kmeans.dropna(subset=['PC1', 'PC2'])).mark_circle(size=80).encode(
+                                          x=alt.X("PC1", title="Componente principal 1"),
+                                          y=alt.Y("PC2", title="Componente principal 2"),
+                                          color=alt.Color("cluster_kmeans:O", 
+                                                        scale=alt.Scale(range=kmeans_colors),
+                                                        legend=alt.Legend(title="Cluster K-means")),
+                                          tooltip=[col for col in [VAR_COLUMN, 'cluster_grp', 'cluster_kmeans'] if col in agg_kmeans.columns]
+                                      ).properties(
+                                          width='container',
+                                          height=400,
+                                          title=f'PCA con K-means (k={n_clusters_kmeans})'
+                                      ).interactive()
+                                      
+                                      st.altair_chart(fig_kmeans, use_container_width=True)
+                                      
+                                      # Comparación entre clusters por reglas y K-means
+                                      if st.checkbox("Comparar clusters: Reglas vs K-means", key="compare_clusters"):
+                                          comparison_df = agg_kmeans.groupby(['cluster_grp', 'cluster_kmeans']).size().reset_index(name='count')
+                                          comparison_pivot = comparison_df.pivot(index='cluster_grp', columns='cluster_kmeans', values='count').fillna(0)
+                                          
+                                          st.markdown("**Matriz de confusión: Clusters por reglas vs K-means**")
+                                          st.dataframe(comparison_pivot, use_container_width=True)
+                                  else:
+                                      st.warning("No hay suficientes datos para el número de clusters seleccionado.")
                           except Exception as e:
                               st.error(f"Error en análisis K-means: {e}")
               
@@ -1595,6 +1690,77 @@ def segmentacion_app(especie: str):
               st.text("Traceback:")
               st.code(traceback.format_exc())
 
+          # Datos por muestra individual con clustering
+          st.markdown("### Datos por muestra individual con clustering")
+          if st.checkbox("Mostrar datos individuales por muestra", key="show_individual_samples"):
+              try:
+                  # Crear datos individuales con clusters asignados
+                  # Usar df_processed que contiene los datos originales por muestra
+                  df_individual = df_processed.copy()
+                  
+                  # Agregar información de cluster para cada muestra
+                  # Hacer merge con agg_groups para obtener cluster_grp
+                  merge_cols = [col for col in [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period'] if col in df_individual.columns and col in agg_groups.columns]
+                  
+                  if merge_cols:
+                      df_individual = df_individual.merge(
+                          agg_groups[merge_cols + ['cluster_grp']],
+                          on=merge_cols,
+                          how='left'
+                      )
+                  else:
+                      # Si no hay columnas para merge, asignar cluster 1 a todos
+                      df_individual['cluster_grp'] = 1
+                  
+                  # Mostrar estadísticas
+                  total_samples = len(df_individual)
+                  samples_with_cluster = df_individual['cluster_grp'].notna().sum()
+                  st.write(f"**Total muestras individuales**: {total_samples}")
+                  st.write(f"**Muestras con cluster asignado**: {samples_with_cluster}")
+                  
+                  # Mostrar distribución de clusters a nivel de muestra
+                  cluster_dist = df_individual['cluster_grp'].value_counts().sort_index()
+                  st.write("**Distribución de muestras por cluster:**")
+                  for cluster, count in cluster_dist.items():
+                      st.write(f"- Cluster {cluster}: {count} muestras")
+                  
+                  # Seleccionar columnas relevantes para mostrar
+                  display_cols_individual = [col for col in [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period'] if col in df_individual.columns]
+                  metric_cols_individual = []
+                  
+                  # Agregar columnas de métricas seleccionadas
+                  for metric in selected_metrics:
+                      if metric == "BRIX" and "Solidos solubles (%)" in df_individual.columns:
+                          metric_cols_individual.append("Solidos solubles (%)")
+                      elif metric == "Acidez (%)" and "Acidez (%)" in df_individual.columns:
+                          metric_cols_individual.append("Acidez (%)")
+                      elif metric == "Firmeza punto débil" and "firmeza_punto_min" in df_individual.columns:
+                          metric_cols_individual.append("firmeza_punto_min")
+                      elif metric == "Mejillas" and "promedio_mejillas_sample" in df_individual.columns:
+                          metric_cols_individual.append("promedio_mejillas_sample")
+                  
+                  display_cols_individual.extend(metric_cols_individual)
+                  display_cols_individual.append('cluster_grp')
+                  
+                  # Filtrar columnas que existen
+                  display_cols_individual = [col for col in display_cols_individual if col in df_individual.columns]
+                  
+                  st.write(f"**Debug individual**: Columnas disponibles: {list(df_individual.columns)[:10]}...")
+                  st.write(f"**Debug individual**: Columnas a mostrar: {display_cols_individual}")
+                  
+                  # Mostrar tabla con datos individuales
+                  if display_cols_individual:
+                      st.dataframe(
+                          df_individual[display_cols_individual].head(50),
+                          use_container_width=True
+                      )
+                  else:
+                      st.warning("No se encontraron columnas válidas para mostrar datos individuales")
+                      
+              except Exception as e:
+                  st.error(f"Error mostrando datos individuales: {e}")
+                  import traceback
+                  st.code(traceback.format_exc())
 
           # Mostrar agregados por variedad (sin separar fruto ni periodo) - condicional
           if show_variety_table:
@@ -1609,6 +1775,97 @@ def segmentacion_app(especie: str):
                   "muestras",
               ]
               st.dataframe(agg_variedad[cols_variedad], use_container_width=True, height=300)
+          
+          # Comparación entre cálculos a nivel de fruto vs variedad
+          st.markdown("### Comparación: Cálculos por Fruto vs por Variedad")
+          if st.checkbox("Mostrar comparación de cálculos", key="show_calculation_comparison"):
+              try:
+                  # Comparar los promedios entre agg_groups (por fruto) y agg_variedad (por variedad)
+                  comparison_metrics = ['promedio_brix', 'promedio_acidez', 'promedio_firmeza_punto']
+                  
+                  # Crear tabla de comparación
+                  comparison_data = []
+                  for var in agg_variedad[VAR_COLUMN].unique():
+                      if pd.notna(var):
+                          # Datos por fruto (agg_groups) - promedio de la variedad
+                          fruto_data = agg_groups[agg_groups[VAR_COLUMN] == var]
+                          
+                          # Datos por variedad (agg_variedad)
+                          var_data = agg_variedad[agg_variedad[VAR_COLUMN] == var]
+                          
+                          if len(fruto_data) > 0 and len(var_data) > 0:
+                              row = {'Variedad': var}
+                              for metric in comparison_metrics:
+                                  if metric in fruto_data.columns and metric in var_data.columns:
+                                      fruto_avg = fruto_data[metric].mean()
+                                      var_avg = var_data[metric].iloc[0]
+                                      
+                                      row[f'{metric}_fruto'] = round(fruto_avg, 2)
+                                      row[f'{metric}_variedad'] = round(var_avg, 2)
+                                      row[f'{metric}_diferencia'] = round(abs(fruto_avg - var_avg), 3)
+                              
+                              comparison_data.append(row)
+                  
+                  if comparison_data:
+                      comparison_df = pd.DataFrame(comparison_data)
+                      st.write("**Comparación de promedios: Agregación por fruto vs por variedad**")
+                      st.write("- `_fruto`: Promedio de los grupos por fruto")
+                      st.write("- `_variedad`: Cálculo directo por variedad")
+                      st.write("- `_diferencia`: Diferencia absoluta entre ambos métodos")
+                      st.dataframe(comparison_df, use_container_width=True)
+                      
+                      # Mostrar estadísticas de diferencias
+                      st.write("**Estadísticas de diferencias:**")
+                      for metric in comparison_metrics:
+                          diff_col = f'{metric}_diferencia'
+                          if diff_col in comparison_df.columns:
+                              avg_diff = comparison_df[diff_col].mean()
+                              max_diff = comparison_df[diff_col].max()
+                              st.write(f"- {metric}: Diferencia promedio = {avg_diff:.3f}, Máxima = {max_diff:.3f}")
+                  else:
+                      st.warning("No se pudieron calcular las comparaciones")
+                      
+              except Exception as e:
+                  st.error(f"Error en comparación de cálculos: {e}")
+          
+          # Verificación del tratamiento de acidez con primer registro
+          st.markdown("### Verificación: Tratamiento de Acidez")
+          if st.checkbox("Verificar tratamiento de acidez (primer registro)", key="show_acidez_verification"):
+              try:
+                  # Buscar en grp_acidez como se está manejando
+                  if 'grp_acidez' in df_processed.columns:
+                      acidez_sample = df_processed.groupby([ESPECIE_COLUMN, VAR_COLUMN, 'harvest_period']).agg({
+                          'grp_acidez': ['first', 'count'],
+                          'Acidez (%)': ['mean', 'count'] if 'Acidez (%)' in df_processed.columns else ['count']
+                      }).round(3)
+                      
+                      st.write("**Verificación del manejo de grp_acidez:**")
+                      st.write("- Se usa el primer valor (`first`) por combinación especie-variedad-periodo")
+                      st.write("- `count` muestra cuántos registros hay por grupo")
+                      st.dataframe(acidez_sample.head(10), use_container_width=True)
+                  else:
+                      st.warning("Columna 'grp_acidez' no encontrada")
+                      
+                  # Mostrar información sobre cómo se están tratando los valores nulos
+                  st.write("**Información sobre tratamiento de valores nulos:**")
+                  null_info = []
+                  for col in ['grp_acidez', 'Acidez (%)']:
+                      if col in df_processed.columns:
+                          null_count = df_processed[col].isna().sum()
+                          total_count = len(df_processed)
+                          null_info.append({
+                              'Columna': col,
+                              'Valores nulos': null_count,
+                              'Total registros': total_count,
+                              'Porcentaje nulos': f"{(null_count/total_count)*100:.1f}%"
+                          })
+                  
+                  if null_info:
+                      st.dataframe(pd.DataFrame(null_info), use_container_width=True)
+                      
+              except Exception as e:
+                  st.error(f"Error en verificación de acidez: {e}")
+          
           # Botón para descargar resultados completos y agregados
           buf = io.BytesIO()
           with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
