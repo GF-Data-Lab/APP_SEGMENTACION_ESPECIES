@@ -24,6 +24,7 @@ from collections.abc import Iterable
 import streamlit as st
 import unicodedata
 import io
+import altair as alt
 
 from utils import show_logo
 
@@ -338,28 +339,28 @@ def segmentacion_app(especie: str):
     def _harvest_period_a(ts: pd.Timestamp | float | str) -> str:
         ts = pd.to_datetime(ts, errors="coerce")
         if pd.isna(ts):
-            return "tardia"
+            return "Period tardia"
         m, d = ts.month, ts.day
         if (m, d) < (11, 22):
-            return "muy_temprana"
+            return "Period muy_temprana"
         if (11, 22) <= (m, d) <= (12, 22):
-            return "temprana"
+            return "Period temprana"
         if (12, 23) <= (m, d) <= (2, 15):
-            return "tardia"
-        return "tardia"
+            return "Period tardia"
+        return "Period tardia"
 
     def _harvest_period_b(ts: pd.Timestamp | float | str) -> str:
         ts = pd.to_datetime(ts, errors="coerce")
         if pd.isna(ts):
-            return "tardia"
+            return "Period tardia"
         m, d = ts.month, ts.day
         if (m, d) < (11, 25):
-            return "muy_temprana"
+            return "Period muy_temprana"
         if (11, 25) <= (m, d) <= (12, 15):
-            return "temprana"
+            return "Period temprana"
         if (12, 16) <= (m, d) <= (2, 15):
-            return "tardia"
-        return "tardia"
+            return "Period tardia"
+        return "Period tardia"
 
     # -----------------------------------------------------------------------
     # Conversión segura de fechas
@@ -372,22 +373,34 @@ def segmentacion_app(especie: str):
     def _safe_parse_date(val: Union[str, float, int, pd.Timestamp]) -> pd.Timestamp | None:
         if isinstance(val, pd.Timestamp):
             return val
-        if not isinstance(val, str):
+        # Manejar números de Excel (días desde 1900-01-01)
+        if isinstance(val, (int, float)) and not pd.isna(val):
             try:
+                # Excel guarda fechas como números
+                # Intentar convertir directamente
+                result = pd.to_datetime(val, unit='D', origin='1899-12-30', errors="coerce")
+                if not pd.isna(result):
+                    return result
+                # Si falla, intentar conversión normal
                 return pd.to_datetime(val, errors="coerce")
             except Exception:
                 return pd.NaT
-        try:
-            dt = pd.to_datetime(val, dayfirst=True, errors="coerce")
-        except Exception:
-            dt = pd.NaT
-        # Si no se obtuvo una fecha válida, intentamos dayfirst=False
-        if pd.isna(dt):
+        # Manejar strings
+        if isinstance(val, str):
+            val = val.strip()
+            if not val:
+                return pd.NaT
             try:
+                # Primero intentar con dayfirst=True (formato dd-mm-yyyy)
+                dt = pd.to_datetime(val, dayfirst=True, errors="coerce")
+                if not pd.isna(dt):
+                    return dt
+                # Si falla, intentar con dayfirst=False (formato mm-dd-yyyy)
                 dt = pd.to_datetime(val, dayfirst=False, errors="coerce")
+                return dt
             except Exception:
-                dt = pd.NaT
-        return dt
+                return pd.NaT
+        return pd.NaT
 
     def process_carozos(
         file: Union[str, Path, pd.DataFrame],
@@ -427,7 +440,7 @@ def segmentacion_app(especie: str):
         df[DATE_COLUMN] = df[DATE_COLUMN].apply(_safe_parse_date)
         # Asignación de período y sub-tipo según especie
         df["plum_subtype"] = df.apply(_plum_subtype, axis=1)
-        df["harvest_period"] = "sin_fecha"  # inicializar
+        df["harvest_period"] = "Period sin_fecha"  # inicializar
         # para nectarines, determinar periodo según color
         idx_nectar = df[ESPECIE_COLUMN] == "Nectarin"
         color_series = (
@@ -441,9 +454,9 @@ def segmentacion_app(especie: str):
         df.loc[idx_blanca, "harvest_period"] = df.loc[idx_blanca, DATE_COLUMN].apply(_harvest_period_b)
         df.loc[idx_nectar & ~idx_blanca, "harvest_period"] = df.loc[idx_nectar & ~idx_blanca, DATE_COLUMN].apply(_harvest_period_a)
         df.loc[
-            idx_nectar & (df["harvest_period"] == "sin_fecha"),
+            idx_nectar & (df["harvest_period"] == "Period sin_fecha"),
             "harvest_period",
-        ] = st.session_state.get("default_period", "tardia")
+        ] = "Period " + st.session_state.get("default_period", "tardia")
         # 3) Conversión a numérico
         _to_numeric(df, NUMERIC_COLS)
         # 3.1) Cálculo de la medida de mejillas: promedio de Mejilla 1 y 2 por fruto
@@ -468,12 +481,12 @@ def segmentacion_app(especie: str):
             # Valor de firmeza punto débil: mínimo de los promedios
             df["Firmeza punto valor"] = fpd_means.min(axis=1)
             # Registrar la columna que dio el mínimo
-            df["Firmeza punto columna"] = fpd_means.idxmin(axis=1)
+            df["Firmeza punto columna"] = fpd_means.idxmin(axis=1, skipna=True)
         else:
             # Usar todas las variables físicas si no se especifican
             fpd_means = df.groupby(grp_keys_fp)[list(COL_FIRMEZA_ALL)].transform('mean')
             df["Firmeza punto valor"] = fpd_means.min(axis=1)
-            df["Firmeza punto columna"] = fpd_means.idxmin(axis=1)
+            df["Firmeza punto columna"] = fpd_means.idxmin(axis=1, skipna=True)
         # 3.3) Relleno de nulos por primera muestra
         # 5) Relleno de nulos por primera muestra
         # Agrupaciones para relleno, clasificación y clusters incluyen especie y periodo de cosecha
@@ -554,7 +567,7 @@ def segmentacion_app(especie: str):
         # 9) Validación de fechas: identificar registros con periodo 'muy_temprana' cuyo mes esté fuera del rango esperado
         try:
             df["periodo_inconsistente"] = False
-            mask_mt = df["harvest_period"] == "muy_temprana"
+            mask_mt = df["harvest_period"] == "Period muy_temprana"
             # Fechas fuera de agosto-noviembre son atípicas para muy temprana
             df.loc[mask_mt, "periodo_inconsistente"] = ~df.loc[mask_mt, DATE_COLUMN].dt.month.isin([8,9,10,11])
         except Exception:
@@ -597,49 +610,6 @@ def segmentacion_app(especie: str):
         """
     )
 
-    # -----------------------------------------------------------------------
-    # Valores por defecto configurables
-    # -----------------------------------------------------------------------
-    st.subheader("Valores por defecto")
-    # Inicializar session_state con defaults si no existen
-    if "default_plum_subtype" not in st.session_state:
-        st.session_state["default_plum_subtype"] = "sugar"
-    if "sugar_upper" not in st.session_state:
-        st.session_state["sugar_upper"] = 60.0
-    if "default_color" not in st.session_state:
-        st.session_state["default_color"] = "Amarilla"
-    if "default_period" not in st.session_state:
-        st.session_state["default_period"] = "tardia"
-
-    if especie_key == "Ciruela":
-        default_plum = st.selectbox(
-            "Tipo de ciruela por defecto si el peso no está disponible",
-            options=["sugar", "candy"],
-            index=["sugar", "candy"].index(st.session_state["default_plum_subtype"]),
-            key="default_plum_subtype",
-        )
-        st.session_state["sugar_upper"] = st.number_input(
-            "Peso máximo para sugar (g)",
-            min_value=10.0,
-            max_value=200.0,
-            value=float(st.session_state["sugar_upper"]),
-            step=1.0,
-        )
-    elif especie_key == "Nectarin":
-        st.session_state["default_color"] = st.selectbox(
-            "Color de pulpa por defecto para Nectarina (si falta)",
-            options=["Amarilla", "Blanca"],
-            index=["Amarilla", "Blanca"].index(st.session_state["default_color"]),
-        )
-        st.session_state["default_period"] = st.selectbox(
-            "Periodo de cosecha por defecto para Nectarina (si falta fecha)",
-            options=["muy_temprana", "temprana", "tardia", "sin_fecha"],
-            index=["muy_temprana", "temprana", "tardia", "sin_fecha"].index(st.session_state["default_period"]),
-        )
-
-    st.info(
-        "Puedes cambiar estos valores y ver cómo afectan a las clasificaciones al recargar el archivo."
-    )
 
     # -----------------------------------------------------------------------
     # Selección de variables para la firmeza punto débil y método de mejillas
@@ -653,17 +623,15 @@ def segmentacion_app(especie: str):
     fpd_selection = st.multiselect(
         "Variables a considerar para la firmeza punto débil",
         options=available_fpd_vars,
-        default=st.session_state["fpd_vars"],
         key="fpd_vars"
     )
     # Método de agregación para las mejillas (media o moda)
     if "mejillas_method" not in st.session_state:
         st.session_state["mejillas_method"] = "media"
-    st.session_state["mejillas_method"] = st.selectbox(
+    mejillas_method = st.selectbox(
         "Método de agregación de la medida de mejillas (avg_mejillas)",
         options=["media", "moda"],
-        index=["media", "moda"].index(st.session_state["mejillas_method"]),
-        key="mejillas_method_select"
+        key="mejillas_method"
     )
 
     # -----------------------------------------------------------------------
@@ -741,11 +709,11 @@ def segmentacion_app(especie: str):
                   .str.lower()
         )
         idx_blanca = idx_nectar & color_series.str.startswith("blanc")
-        tmp_df["harvest_period"] = "sin_fecha"
+        tmp_df["harvest_period"] = "Period sin_fecha"
         tmp_df.loc[idx_blanca, "harvest_period"] = tmp_df.loc[idx_blanca, DATE_COLUMN].apply(_harvest_period_b)
         tmp_df.loc[idx_nectar & ~idx_blanca, "harvest_period"] = tmp_df.loc[idx_nectar & ~idx_blanca, DATE_COLUMN].apply(_harvest_period_a)
     else:
-        tmp_df["harvest_period"] = "sin_fecha"
+        tmp_df["harvest_period"] = "Period sin_fecha"
     _to_numeric(tmp_df, NUMERIC_COLS)
     # Detección de outliers por especie, variedad, muestra y periodo (|z| > 2)
     group_cols = [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, "harvest_period"]
@@ -1059,7 +1027,7 @@ def segmentacion_app(especie: str):
           for clus, grp in agg_groups.groupby('cluster_grp'):
               if pd.isna(clus):
                   continue
-              idx_min = grp['promedio_firmeza_punto'].idxmin()
+              idx_min = grp['promedio_firmeza_punto'].idxmin(skipna=True)
               weak_pt = agg_groups.loc[idx_min, 'punto_firmeza_min']
               agg_groups.loc[agg_groups['cluster_grp'] == clus, 'punto_firmeza_cluster'] = weak_pt
 
@@ -1105,10 +1073,10 @@ def segmentacion_app(especie: str):
           styled_agg = (
               agg_groups[display_cols]
               .style
-              .applymap(color_cluster, subset=[c for c in subset_cols if c in display_cols]))
+              .map(color_cluster, subset=[c for c in subset_cols if c in display_cols]))
           styled_agg = (
               agg_groups.style
-              .applymap(color_cluster, subset=["cluster_grp"])
+              .map(color_cluster, subset=["cluster_grp"])
 
               .apply(highlight_inconsistent, axis=1)
           )
@@ -1120,7 +1088,7 @@ def segmentacion_app(especie: str):
               # Importaciones necesarias para el gráfico PCA
               from sklearn.preprocessing import StandardScaler
               from sklearn.decomposition import PCA
-              import altair as alt
+              # altair ya está importado al inicio del archivo
               
               # Definir colores para grupos 1-4
               group_colors = {

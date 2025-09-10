@@ -450,7 +450,7 @@ with tab5:
         fig = px.scatter(
             df_plot.loc[idx_plot],
             x="PC1",
-            y=("PC2" if n_comp >= 2 else None),
+            y="PC2",  # Siempre tenemos 2 componentes en clustering
             color=labels_plot_s.loc[idx_plot].astype(str),
             title=title,
             render_mode="webgl"
