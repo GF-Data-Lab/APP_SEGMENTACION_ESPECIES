@@ -60,7 +60,23 @@ st.title("🔍 Análisis Exploratorio y Clustering de Carozos")
 if "carozos_df" not in st.session_state:
     st.warning("Carga primero un archivo en 'Carga de archivos'.")
     st.stop()
-df_raw = st.session_state["carozos_df"].copy()
+
+# Verificar si hay datos filtrados disponibles
+df_filtered = st.session_state.get("carozos_df_filtered")
+df_raw = df_filtered if df_filtered is not None else st.session_state["carozos_df"]
+df_raw = df_raw.copy()
+
+# Mostrar información sobre el tipo de datos usado
+if df_filtered is not None:
+    st.info(f"📊 Usando datos filtrados: {len(df_filtered)} registros (de {len(st.session_state.get('carozos_df', []))} originales)")
+    if st.button("🔄 Usar datos originales (sin filtros)", key="analisis_use_original"):
+        if "carozos_df_filtered" in st.session_state:
+            del st.session_state["carozos_df_filtered"]
+        st.rerun()
+else:
+    df_original = st.session_state.get("carozos_df")
+    if df_original is not None:
+        st.info(f"📊 Usando todos los datos originales: {len(df_original)} registros")
 
 # Columnas esperadas para permitir clasificación y detección de outliers
 expected_cols = [
@@ -101,6 +117,26 @@ df_no_outliers = df_raw[~mask_outliers].copy()
 exclude_out = st.checkbox("Excluir registros atípicos (IQR)", value=False)
 df = df_no_outliers if exclude_out else df_raw.copy()
 numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+
+# Inicializar variables para clustering/PCA para evitar errores en export
+# Estas se sobrescribirán cuando el usuario use las pestañas correspondientes
+try:
+    pc_default, _ = run_pca(df[numeric_cols].fillna(0), 2)
+    pca_df = pd.DataFrame(pc_default, columns=["PC1", "PC2"])
+    labels_gen_s = pd.Series([0] * len(df), index=df.index)
+    labels_plum_s = pd.Series([0] * len(df[df["Especie"] == "Ciruela"]), 
+                             index=df[df["Especie"] == "Ciruela"].index)
+    labels_nec_s = pd.Series([0] * len(df[df["Especie"] == "Nectarin"]), 
+                            index=df[df["Especie"] == "Nectarin"].index)
+except Exception as e:
+    st.warning(f"Error inicializando variables por defecto: {e}")
+    # Fallback básico
+    pca_df = pd.DataFrame({"PC1": [0] * len(df), "PC2": [0] * len(df)})
+    labels_gen_s = pd.Series([0] * len(df), index=df.index)
+    labels_plum_s = pd.Series([0] * len(df[df["Especie"] == "Ciruela"]), 
+                             index=df[df["Especie"] == "Ciruela"].index)
+    labels_nec_s = pd.Series([0] * len(df[df["Especie"] == "Nectarin"]), 
+                            index=df[df["Especie"] == "Nectarin"].index)
 
 # Ahora sí son 7 pestañas
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
@@ -599,9 +635,9 @@ with tab5:
 # --- 6. Exportar ---
 with tab6:
     st.subheader("6. Guardar y Descargar")
+    # Usar siempre pca_df del clustering (que siempre tiene 2 componentes)
     df["pca_1"] = pca_df["PC1"]
-    if n_comp >= 2:
-        df["pca_2"] = pca_df["PC2"]
+    df["pca_2"] = pca_df["PC2"]
     df["cluster_generic"] = labels_gen_s
     df.loc[df["Especie"] == "Ciruela", "cluster_plum"] = labels_plum_s
     df.loc[df["Especie"] == "Nectarin", "cluster_nec"] = labels_nec_s

@@ -103,14 +103,42 @@ target_col = st.selectbox(
 
 # — Features: columnas numéricas
 numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+
+# Mostrar información sobre valores nulos
+st.markdown("#### 📊 Información de métricas disponibles")
+null_info = df[numeric_cols].isnull().sum()
+null_pct = (null_info / len(df) * 100).round(1)
+
+# Crear DataFrame con info de nulos
+metrics_info = pd.DataFrame({
+    'Métrica': numeric_cols,
+    'Valores nulos': null_info.values,
+    '% Nulos': null_pct.values,
+    'Valores válidos': len(df) - null_info.values
+})
+
+# Mostrar tabla
+st.dataframe(metrics_info, use_container_width=True)
+
+# Sugerencias
+good_metrics = metrics_info[metrics_info['% Nulos'] < 20]['Métrica'].tolist()
+if good_metrics:
+    st.info(f"💡 **Recomendación**: Métricas con menos de 20% de valores nulos: {', '.join(good_metrics[:5])}")
+
 features = st.multiselect(
     "Variables predictoras (features)",
     options=numeric_cols,
-    default=numeric_cols[:4] if len(numeric_cols) >= 4 else numeric_cols
+    default=good_metrics[:4] if len(good_metrics) >= 4 else numeric_cols[:4],
+    help="Selecciona las métricas que quieres usar para entrenar el modelo. Se recomienda usar métricas con pocos valores nulos."
 )
 if len(features) < 2:
     st.error("Selecciona al menos **2** variables predictoras.")
     st.stop()
+
+# Mostrar estadísticas de las métricas seleccionadas
+selected_info = metrics_info[metrics_info['Métrica'].isin(features)]
+st.markdown("#### 📋 Métricas seleccionadas:")
+st.dataframe(selected_info, use_container_width=True)
 
 # --------------------------------------------------
 # 3. Partición de datos con fallback si falla stratify

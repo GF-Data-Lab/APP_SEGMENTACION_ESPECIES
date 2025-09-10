@@ -105,6 +105,22 @@ def detectar_outliers_iqr(df, columns, factor=1.5):
     
     return df_outliers, outliers_info
 
+def crear_boxplot_outliers(df, column, title):
+    """Crea un boxplot simple para visualizar outliers"""
+    if column not in df.columns:
+        return None
+    
+    values = pd.to_numeric(df[column], errors='coerce').dropna()
+    
+    fig = go.Figure()
+    fig.add_trace(go.Box(y=values, name=column, boxpoints="outliers"))
+    fig.update_layout(
+        title=title,
+        yaxis_title=column,
+        height=400
+    )
+    return fig
+
 def crear_grafico_outliers(df, column, outlier_method='zscore'):
     """Crea gráficos para visualizar outliers"""
     if column not in df.columns:
@@ -157,17 +173,60 @@ def crear_grafico_outliers(df, column, outlier_method='zscore'):
     fig.update_layout(height=600, showlegend=True)
     return fig
 
+def detectar_outliers_por_especie(df_especie, especie_nombre, method, threshold_z=2.0, factor_iqr=1.5):
+    """Función auxiliar para detectar outliers por especie"""
+    
+    # Variables numéricas relevantes para cada especie
+    numeric_columns = [
+        "BRIX", "Acidez (%)", "Peso (g)",
+        "Punta", "Quilla", "Hombro", "Mejilla 1", "Mejilla 2"
+    ]
+    
+    # Filtrar solo columnas que existan
+    available_columns = [col for col in numeric_columns if col in df_especie.columns]
+    
+    if not available_columns:
+        st.warning(f"No se encontraron columnas numéricas para {especie_nombre}")
+        return df_especie, {}
+    
+    st.markdown(f"#### Variables analizadas para {especie_nombre}:")
+    st.write(", ".join(available_columns))
+    
+    # Configuración de parámetros
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if method == "Z-Score":
+            threshold = st.slider(f"Umbral Z-Score para {especie_nombre}", 1.0, 4.0, threshold_z, 0.1, key=f"zscore_{especie_nombre}")
+        else:
+            factor = st.slider(f"Factor IQR para {especie_nombre}", 1.0, 3.0, factor_iqr, 0.1, key=f"iqr_{especie_nombre}")
+    
+    with col2:
+        st.markdown("**Método seleccionado:**")
+        if method == "Z-Score":
+            st.info(f"Z-Score con umbral {threshold}")
+        else:
+            st.info(f"IQR con factor {factor}")
+    
+    # Detectar outliers
+    if method == "Z-Score":
+        df_outliers, outliers_info = detectar_outliers_zscore(df_especie, available_columns, threshold)
+    else:
+        df_outliers, outliers_info = detectar_outliers_iqr(df_especie, available_columns, factor)
+    
+    return df_outliers, outliers_info, available_columns
+
 def main():
     generar_menu()
     
-    st.title("🎯 Detección de Outliers y Filtrado de Datos")
+    st.title("🎯 Detección de Outliers por Especie")
     
     st.markdown("""
     Esta página te permite:
-    1. **Detectar outliers** en tus datos usando diferentes métodos
-    2. **Visualizar** la distribución de outliers por variable
-    3. **Filtrar datos** para excluir outliers del análisis
-    4. **Configurar parámetros** de detección personalizados
+    1. **Detectar outliers por especie** usando diferentes métodos (Z-Score o IQR)
+    2. **Visualizar** distribuciones y outliers por cada especie
+    3. **Filtrar y guardar** datos sin outliers para cada especie
+    4. **Configurar parámetros** específicos por especie
     """)
     
     # Verificar si hay datos cargados
@@ -180,253 +239,188 @@ def main():
     df = st.session_state["carozos_df"].copy()
     st.success(f"✅ Datos cargados: {len(df)} registros, {len(df.columns)} columnas")
     
-    # Configuración de detección de outliers
-    st.header("⚙️ Configuración de Detección")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        method = st.selectbox(
-            "Método de detección:",
-            ["Z-Score", "IQR (Rango Intercuartílico)"],
-            help="Z-Score: identifica valores > N desviaciones estándar. IQR: identifica valores fuera del rango Q1-1.5*IQR, Q3+1.5*IQR"
-        )
-        
-        if method == "Z-Score":
-            threshold = st.slider(
-                "Umbral Z-Score:",
-                min_value=1.0, max_value=4.0, value=2.0, step=0.1,
-                help="Valores con |Z-Score| > umbral se consideran outliers"
-            )
-        else:
-            factor = st.slider(
-                "Factor IQR:",
-                min_value=1.0, max_value=3.0, value=1.5, step=0.1,
-                help="Outliers = valores < Q1-factor*IQR o > Q3+factor*IQR"
-            )
-    
-    with col2:
-        # Selección de columnas numéricas para análisis
-        numeric_columns = []
-        for col in df.columns:
-            try:
-                pd.to_numeric(df[col], errors='coerce')
-                if df[col].notna().sum() > 10:  # Al menos 10 valores no nulos
-                    numeric_columns.append(col)
-            except:
-                pass
-        
-        selected_columns = st.multiselect(
-            "Columnas a analizar:",
-            numeric_columns,
-            default=numeric_columns[:5] if len(numeric_columns) > 5 else numeric_columns,
-            help="Selecciona las variables numéricas para detectar outliers"
-        )
-    
-    if not selected_columns:
-        st.warning("⚠️ Selecciona al menos una columna para analizar.")
+    # Verificar que existe la columna de especie
+    if "Especie" not in df.columns:
+        st.error("❌ No se encontró la columna 'Especie' en los datos.")
         return
     
-    # Ejecutar detección de outliers
-    st.header("🔍 Resultados de Detección")
+    # Mostrar resumen de especies
+    especies_disponibles = df["Especie"].value_counts()
+    st.markdown("### 📊 Resumen por especie:")
     
-    with st.spinner("Detectando outliers..."):
+    col_summary1, col_summary2 = st.columns(2)
+    with col_summary1:
+        st.dataframe(especies_disponibles.to_frame("Registros"), use_container_width=True)
+    
+    # Configuración global
+    st.header("⚙️ Configuración de Detección")
+    
+    col_config1, col_config2 = st.columns(2)
+    with col_config1:
+        method = st.selectbox("Método de detección", ["Z-Score", "IQR"])
+    
+    with col_config2:
         if method == "Z-Score":
-            df_outliers, outliers_info = detectar_outliers_zscore(df, selected_columns, threshold)
+            default_threshold = st.number_input("Umbral base Z-Score", 1.0, 4.0, 2.0, 0.1)
         else:
-            df_outliers, outliers_info = detectar_outliers_iqr(df, selected_columns, factor)
+            default_factor = st.number_input("Factor base IQR", 1.0, 3.0, 1.5, 0.1)
     
-    # Mostrar resumen de outliers
-    st.subheader("📊 Resumen de Outliers Detectados")
+    # Pestañas por especie
+    st.header("📋 Detección por Especie")
     
-    summary_data = []
-    for col, info in outliers_info.items():
-        summary_data.append({
-            "Variable": col,
-            "Total Outliers": info['count'],
-            "% Outliers": f"{info['percentage']:.2f}%",
-            "Registros Válidos": df[col].notna().sum(),
-            "Método": method
-        })
+    # Crear pestañas dinámicamente según las especies disponibles
+    especies = df["Especie"].unique()
+    tabs = st.tabs([f"🍑 {especie}" for especie in especies])
     
-    summary_df = pd.DataFrame(summary_data)
-    st.dataframe(summary_df, use_container_width=True)
+    # Diccionario para almacenar datos filtrados
+    filtered_data = {}
     
-    # Crear pestañas para visualización y filtrado
-    tab1, tab2, tab3 = st.tabs(["📈 Visualización", "🔧 Filtrado de Datos", "📋 Datos Detallados"])
-    
-    with tab1:
-        st.subheader("Visualización de Outliers")
-        
-        col_to_plot = st.selectbox("Selecciona variable para visualizar:", selected_columns)
-        
-        if col_to_plot:
-            fig = crear_grafico_outliers(df_outliers, col_to_plot, 
-                                       'zscore' if method == "Z-Score" else 'iqr')
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
+    for i, especie in enumerate(especies):
+        with tabs[i]:
+            st.markdown(f"### Análisis de Outliers - {especie}")
             
-            # Estadísticas de la variable
-            st.write("**Estadísticas:**")
-            col_stats = df[col_to_plot].describe()
-            st.write(col_stats)
-    
-    with tab2:
-        st.subheader("Filtrado de Datos para Modelado")
-        
-        st.markdown("""
-        **Configura qué datos excluir del análisis:**
-        - Puedes excluir outliers por variable individual
-        - O aplicar filtros combinados
-        """)
-        
-        # Crear filtros por variable
-        filters = {}
-        for col in selected_columns:
-            outlier_col = f'{col}_outlier'
-            if outlier_col in df_outliers.columns:
-                exclude_outliers = st.checkbox(
-                    f"Excluir outliers de **{col}** ({outliers_info[col]['count']} registros)",
-                    value=False,
-                    key=f"exclude_{col}"
-                )
-                filters[col] = exclude_outliers
-        
-        # Filtros adicionales
-        st.write("**Filtros Adicionales:**")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Filtro por especie
-            if 'Especie' in df.columns:
-                species_options = ['Todas'] + list(df['Especie'].unique())
-                selected_species = st.multiselect(
-                    "Incluir especies:",
-                    species_options,
-                    default=species_options,
-                    key="species_filter"
-                )
-        
-        with col2:
-            # Filtro por rango de fechas
-            if 'Fecha evaluación' in df.columns:
-                date_filter = st.checkbox("Aplicar filtro de fechas", key="date_filter")
-                if date_filter:
-                    # Convertir fechas para filtro
-                    try:
-                        df['fecha_parsed'] = pd.to_datetime(df['Fecha evaluación'], errors='coerce')
-                        date_range = st.date_input(
-                            "Rango de fechas:",
-                            value=[df['fecha_parsed'].min(), df['fecha_parsed'].max()],
-                            key="date_range"
-                        )
-                    except:
-                        st.warning("No se pudo parsear las fechas")
-        
-        # Aplicar filtros y mostrar resultado
-        if st.button("🔄 Aplicar Filtros", key="apply_filters"):
-            df_filtered = df_outliers.copy()
-            excluded_count = 0
+            # Filtrar datos por especie
+            df_especie = df[df["Especie"] == especie].copy()
+            st.info(f"📊 **{especie}**: {len(df_especie)} registros")
             
-            # Aplicar filtros de outliers
-            for col, exclude in filters.items():
-                if exclude:
-                    outlier_col = f'{col}_outlier'
-                    mask = df_filtered[outlier_col] == False
-                    excluded_count += (~mask).sum()
-                    df_filtered = df_filtered[mask]
+            if len(df_especie) == 0:
+                st.warning(f"No hay datos para {especie}")
+                continue
             
-            # Aplicar filtro de especies
-            if 'Especie' in df.columns and 'Todas' not in selected_species:
-                df_filtered = df_filtered[df_filtered['Especie'].isin(selected_species)]
-            
-            # Aplicar filtro de fechas
-            if date_filter and 'fecha_parsed' in df_filtered.columns:
-                if len(date_range) == 2:
-                    start_date, end_date = date_range
-                    df_filtered = df_filtered[
-                        (df_filtered['fecha_parsed'] >= pd.Timestamp(start_date)) &
-                        (df_filtered['fecha_parsed'] <= pd.Timestamp(end_date))
-                    ]
-            
-            # Guardar datos filtrados en session_state
-            st.session_state["carozos_df_filtered"] = df_filtered
-            
-            st.success(f"""
-            ✅ **Filtros aplicados:**
-            - Registros originales: {len(df)}
-            - Registros después de filtros: {len(df_filtered)}
-            - Registros excluidos: {len(df) - len(df_filtered)}
-            """)
-            
-            # Mostrar estadísticas del dataset filtrado
-            if len(df_filtered) > 0:
-                st.write("**Distribución por especie (datos filtrados):**")
-                if 'Especie' in df_filtered.columns:
-                    species_counts = df_filtered['Especie'].value_counts()
-                    st.write(species_counts)
+            # Detectar outliers para esta especie
+            try:
+                if method == "Z-Score":
+                    result = detectar_outliers_por_especie(df_especie, especie, method, default_threshold)
+                else:
+                    result = detectar_outliers_por_especie(df_especie, especie, method, factor_iqr=default_factor)
                 
-                # Opción para descargar datos filtrados
-                @st.cache_data
-                def convert_df_to_csv(dataframe):
-                    return dataframe.to_csv(index=False).encode('utf-8')
+                df_outliers, outliers_info, available_columns = result
                 
-                csv_filtered = convert_df_to_csv(df_filtered)
-                st.download_button(
-                    label="📥 Descargar datos filtrados (CSV)",
-                    data=csv_filtered,
-                    file_name="datos_filtrados_sin_outliers.csv",
-                    mime="text/csv"
-                )
-        
-        # Mostrar estado actual de filtros
-        if "carozos_df_filtered" in st.session_state:
-            filtered_df = st.session_state["carozos_df_filtered"]
-            st.info(f"📊 **Datos filtrados activos:** {len(filtered_df)} registros (de {len(df)} originales)")
-            
-            if st.button("🗑️ Limpiar filtros", key="clear_filters"):
-                if "carozos_df_filtered" in st.session_state:
-                    del st.session_state["carozos_df_filtered"]
-                st.success("✅ Filtros eliminados. Se usarán todos los datos originales.")
-                st.rerun()
-    
-    with tab3:
-        st.subheader("Vista Detallada de Outliers")
-        
-        # Tabla con outliers marcados
-        variable_detail = st.selectbox("Variable para ver detalles:", selected_columns, key="detail_var")
-        
-        if variable_detail:
-            outlier_col = f'{variable_detail}_outlier'
-            if outlier_col in df_outliers.columns:
-                # Mostrar solo registros con outliers
-                outliers_only = df_outliers[df_outliers[outlier_col] == True]
+                # Mostrar resumen de outliers
+                st.markdown("#### 📈 Resumen de Outliers:")
                 
-                if len(outliers_only) > 0:
-                    st.write(f"**Registros con outliers en {variable_detail}:** {len(outliers_only)}")
+                if outliers_info:
+                    summary_data = []
+                    for var, info in outliers_info.items():
+                        summary_data.append({
+                            'Variable': var,
+                            'Outliers': info['count'],
+                            '% Outliers': f"{info['percentage']:.1f}%"
+                        })
                     
-                    # Seleccionar columnas relevantes para mostrar
-                    cols_to_show = ['Especie', 'Variedad', variable_detail]
-                    if method == "Z-Score":
-                        zscore_col = f'{variable_detail}_zscore'
-                        if zscore_col in outliers_only.columns:
-                            cols_to_show.append(zscore_col)
-                    else:
-                        bound_cols = [f'{variable_detail}_lower_bound', f'{variable_detail}_upper_bound']
-                        cols_to_show.extend([col for col in bound_cols if col in outliers_only.columns])
+                    summary_df = pd.DataFrame(summary_data)
+                    st.dataframe(summary_df, use_container_width=True)
                     
-                    # Filtrar columnas que existen
-                    available_cols = [col for col in cols_to_show if col in outliers_only.columns]
+                    # Visualización
+                    st.markdown("#### 📊 Visualización de Outliers:")
                     
-                    st.dataframe(
-                        outliers_only[available_cols].head(100),
-                        use_container_width=True
+                    # Selector de variable para visualizar
+                    var_to_plot = st.selectbox(
+                        f"Variable a visualizar para {especie}",
+                        available_columns,
+                        key=f"var_plot_{especie}"
                     )
                     
-                    if len(outliers_only) > 100:
-                        st.info(f"Mostrando los primeros 100 de {len(outliers_only)} outliers")
+                    if var_to_plot:
+                        # Crear gráfico de boxplot
+                        fig = crear_boxplot_outliers(df_especie, var_to_plot, f"{var_to_plot} - {especie}")
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Opción para filtrar outliers
+                    st.markdown("#### 🗂️ Filtrado de Datos:")
+                    
+                    if st.checkbox(f"Aplicar filtro de outliers para {especie}", key=f"filter_{especie}"):
+                        # Crear máscara de outliers
+                        outlier_mask = pd.Series(False, index=df_especie.index)
+                        
+                        for col in available_columns:
+                            outlier_col = f"{col}_outlier"
+                            if outlier_col in df_outliers.columns:
+                                outlier_mask |= df_outliers[outlier_col]
+                        
+                        # Datos sin outliers
+                        df_clean = df_especie[~outlier_mask]
+                        total_outliers_removed = outlier_mask.sum()
+                        
+                        st.success(f"✅ **{especie}**: Removidos {total_outliers_removed} outliers. Datos limpios: {len(df_clean)} registros")
+                        
+                        # Guardar datos filtrados
+                        filtered_data[especie] = df_clean
+                        
+                        # Mostrar estadísticas comparativas
+                        col_stats1, col_stats2 = st.columns(2)
+                        
+                        with col_stats1:
+                            st.markdown("**Datos originales:**")
+                            st.dataframe(df_especie[available_columns].describe(), use_container_width=True)
+                        
+                        with col_stats2:
+                            st.markdown("**Datos filtrados:**")
+                            st.dataframe(df_clean[available_columns].describe(), use_container_width=True)
+                    
                 else:
-                    st.info("No se encontraron outliers para esta variable.")
+                    st.info("No se detectaron outliers o no hay suficientes datos.")
+                    
+            except Exception as e:
+                st.error(f"Error procesando {especie}: {e}")
+    
+    # Opción para guardar datos filtrados
+    st.header("💾 Guardar Datos Filtrados")
+    
+    if filtered_data:
+        st.markdown("### Resumen de datos filtrados:")
+        
+        summary_filtered = []
+        total_original = len(df)
+        total_filtered = 0
+        
+        for especie, df_clean in filtered_data.items():
+            original_count = len(df[df["Especie"] == especie])
+            filtered_count = len(df_clean)
+            removed_count = original_count - filtered_count
+            total_filtered += filtered_count
+            
+            summary_filtered.append({
+                'Especie': especie,
+                'Registros Originales': original_count,
+                'Registros Filtrados': filtered_count,
+                'Outliers Removidos': removed_count,
+                '% Removido': f"{(removed_count/original_count*100):.1f}%"
+            })
+        
+        summary_df_filtered = pd.DataFrame(summary_filtered)
+        st.dataframe(summary_df_filtered, use_container_width=True)
+        
+        # Combinar datos filtrados
+        df_combined_filtered = pd.concat(list(filtered_data.values()), ignore_index=True)
+        
+        # Agregar especies no filtradas
+        especies_no_filtradas = [esp for esp in especies if esp not in filtered_data.keys()]
+        if especies_no_filtradas:
+            df_no_filtradas = df[df["Especie"].isin(especies_no_filtradas)]
+            df_combined_filtered = pd.concat([df_combined_filtered, df_no_filtradas], ignore_index=True)
+        
+        st.info(f"📊 **Total**: {total_original} → {len(df_combined_filtered)} registros ({total_original - len(df_combined_filtered)} outliers removidos)")
+        
+        # Botón para guardar
+        if st.button("💾 Guardar datos filtrados", key="save_filtered"):
+            st.session_state["carozos_df_filtered"] = df_combined_filtered
+            st.success("✅ Datos filtrados guardados exitosamente. Se usarán en las páginas de segmentación.")
+            st.balloons()
+        
+    else:
+        st.info("No hay datos filtrados para guardar. Aplica filtros en las pestañas de especies.")
+    
+    # Mostrar estado actual
+    if "carozos_df_filtered" in st.session_state:
+        filtered_df = st.session_state["carozos_df_filtered"]
+        st.success(f"✅ **Estado actual**: Datos filtrados activos con {len(filtered_df)} registros")
+        
+        if st.button("🗑️ Limpiar todos los filtros"):
+            if "carozos_df_filtered" in st.session_state:
+                del st.session_state["carozos_df_filtered"]
+            st.success("✅ Filtros eliminados. Se usarán todos los datos originales.")
+            st.rerun()
 
 if __name__ == "__main__":
     main()

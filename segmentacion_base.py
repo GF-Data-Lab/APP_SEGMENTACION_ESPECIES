@@ -441,7 +441,12 @@ def segmentacion_app(especie: str):
         # Asignación de período y sub-tipo según especie
         df["plum_subtype"] = df.apply(_plum_subtype, axis=1)
         df["harvest_period"] = "Period sin_fecha"  # inicializar
-        # para nectarines, determinar periodo según color
+        
+        # Para ciruelas, usar periodo tipo A (sin distinción de color)
+        idx_ciruela = df[ESPECIE_COLUMN] == "Ciruela"
+        df.loc[idx_ciruela, "harvest_period"] = df.loc[idx_ciruela, DATE_COLUMN].apply(_harvest_period_a)
+        
+        # Para nectarines, determinar periodo según color
         idx_nectar = df[ESPECIE_COLUMN] == "Nectarin"
         color_series = (
             df.get(COLOR_COLUMN, pd.Series("", index=df.index))
@@ -453,8 +458,10 @@ def segmentacion_app(especie: str):
         idx_blanca = idx_nectar & color_series.str.startswith("blanc")
         df.loc[idx_blanca, "harvest_period"] = df.loc[idx_blanca, DATE_COLUMN].apply(_harvest_period_b)
         df.loc[idx_nectar & ~idx_blanca, "harvest_period"] = df.loc[idx_nectar & ~idx_blanca, DATE_COLUMN].apply(_harvest_period_a)
+        
+        # Para ambas especies, usar valor por defecto si no se pudo determinar
         df.loc[
-            idx_nectar & (df["harvest_period"] == "Period sin_fecha"),
+            (idx_nectar | idx_ciruela) & (df["harvest_period"] == "Period sin_fecha"),
             "harvest_period",
         ] = "Period " + st.session_state.get("default_period", "tardia")
         # 3) Conversión a numérico
@@ -1008,18 +1015,51 @@ def segmentacion_app(especie: str):
           agg_groups['grp_acidez'] = acid_classes
           # Recalcular cond_sum a nivel de grupo con estas bandas
           metric_groups = ['grp_brix', 'grp_mejillas', 'grp_firmeza_punto', 'grp_acidez']
-          if cond_method == 'media':
-              agg_groups['cond_sum_metric'] = agg_groups[metric_groups].mean(axis=1, skipna=True)
+          
+          # Debug: verificar disponibilidad de métricas
+          available_metrics = [col for col in metric_groups if col in agg_groups.columns]
+          missing_metrics = [col for col in metric_groups if col not in agg_groups.columns]
+          st.write(f"**Debug métricas**: Disponibles: {available_metrics}, Faltantes: {missing_metrics}")
+          
+          if len(available_metrics) == 0:
+              st.warning("No hay métricas disponibles para clustering. Asignando cluster 1 a todos.")
+              agg_groups['cond_sum_grp'] = 1.0
           else:
-              agg_groups['cond_sum_metric'] = agg_groups[metric_groups].sum(axis=1, min_count=1)
-          agg_groups['cond_sum_grp'] = agg_groups['cond_sum_metric']
-          if agg_groups['cond_sum_grp'].notna().nunique() >= 4:
+              if cond_method == 'media':
+                  agg_groups['cond_sum_metric'] = agg_groups[available_metrics].mean(axis=1, skipna=True)
+              else:
+                  agg_groups['cond_sum_metric'] = agg_groups[available_metrics].sum(axis=1, min_count=1)
+              agg_groups['cond_sum_grp'] = agg_groups['cond_sum_metric']
+          # Debugging información de clustering
+          valid_values = agg_groups['cond_sum_grp'].notna().sum()
+          unique_values = agg_groups['cond_sum_grp'].dropna().nunique()
+          st.write(f"**Debug clustering**: Valores válidos: {valid_values}, Únicos: {unique_values}")
+          
+          if unique_values >= 4:
               try:
                   bins_metric = pd.qcut(agg_groups['cond_sum_grp'], 4, labels=[1,2,3,4])
               except ValueError:
-                  bins_metric = pd.cut(agg_groups['cond_sum_grp'], 4, labels=[1,2,3,4])
+                  try:
+                      bins_metric = pd.cut(agg_groups['cond_sum_grp'], 4, labels=[1,2,3,4])
+                  except ValueError:
+                      # Si cut también falla, asignar cluster 1 a todos
+                      bins_metric = pd.Series(1, index=agg_groups.index)
+                      bins_metric[agg_groups['cond_sum_grp'].isna()] = np.nan
+          elif unique_values >= 2:
+              # Si tenemos al menos 2 valores únicos, crear 2 clusters
+              try:
+                  bins_metric = pd.qcut(agg_groups['cond_sum_grp'], 2, labels=[1,2])
+              except ValueError:
+                  try:
+                      bins_metric = pd.cut(agg_groups['cond_sum_grp'], 2, labels=[1,2])
+                  except ValueError:
+                      # Si cut también falla, asignar cluster 1 a todos
+                      bins_metric = pd.Series(1, index=agg_groups.index)
+                      bins_metric[agg_groups['cond_sum_grp'].isna()] = np.nan
           else:
-              bins_metric = pd.Series(np.nan, index=agg_groups.index)
+              # Fallback: asignar cluster 1 a todos los registros válidos
+              bins_metric = pd.Series(1, index=agg_groups.index)
+              bins_metric[agg_groups['cond_sum_grp'].isna()] = np.nan
           agg_groups['cluster_grp'] = bins_metric
 
           # Determinar el punto de firmeza más bajo por cluster y repetirlo
@@ -1090,6 +1130,42 @@ def segmentacion_app(especie: str):
               from sklearn.decomposition import PCA
               # altair ya está importado al inicio del archivo
               
+              # Verificar que tenemos datos y las columnas necesarias
+              if len(agg_groups) == 0:
+                  st.warning("No hay datos suficientes para generar el gráfico PCA.")
+                  st.stop()
+              
+              # Verificar columnas disponibles
+              available_cols = agg_groups.columns.tolist()
+              st.write(f"**Debug**: Columnas disponibles en agg_groups: {available_cols[:10]}...")  # Solo las primeras 10
+              
+              # Seleccionar características numéricas disponibles
+              potential_features = [
+                  "promedio_cond_sum",
+                  "promedio_brix", 
+                  "promedio_acidez",
+                  "promedio_firmeza_punto",
+                  "promedio_mejillas",
+              ]
+              pca_features = [col for col in potential_features if col in agg_groups.columns]
+              
+              if len(pca_features) < 2:
+                  st.warning(f"No se encontraron suficientes características numéricas para PCA. Disponibles: {pca_features}")
+                  st.stop()
+              
+              st.write(f"**Debug**: Usando características para PCA: {pca_features}")
+              
+              # Verificar datos no vacíos
+              df_features = agg_groups[pca_features].fillna(0)
+              if df_features.empty or df_features.isna().all().all():
+                  st.warning("Todas las características están vacías o son NaN.")
+                  st.stop()
+              
+              # Verificar cluster_grp
+              if 'cluster_grp' not in agg_groups.columns:
+                  st.warning("Columna 'cluster_grp' no encontrada.")
+                  agg_groups['cluster_grp'] = 1  # Valor por defecto
+              
               # Definir colores para grupos 1-4
               group_colors = {
                   1: '#a8e6cf',  # verde claro
@@ -1098,15 +1174,6 @@ def segmentacion_app(especie: str):
                   4: '#ff8b94',  # rojo rosado
               }
               
-              # Seleccionamos las características numéricas para el análisis
-              pca_features = [
-                  "promedio_cond_sum",
-                  "promedio_brix",
-                  "promedio_acidez",
-                  "promedio_firmeza_punto",
-                  "promedio_mejillas",
-              ]
-              df_features = agg_groups[pca_features].fillna(0)
               # Normalizamos
               scaler = StandardScaler()
               X_scaled = scaler.fit_transform(df_features)
@@ -1114,23 +1181,53 @@ def segmentacion_app(especie: str):
               pcs = pca.fit_transform(X_scaled)
               agg_groups["PC1"] = pcs[:, 0]
               agg_groups["PC2"] = pcs[:, 1]
+              
+              # Verificar que tenemos clusters válidos
+              unique_clusters = agg_groups['cluster_grp'].dropna().unique()
+              st.write(f"**Debug**: Clusters únicos: {unique_clusters}")
+              
               # Construir gráfico interactivo con Altair
-              color_scale = alt.Scale(domain=[1,2,3,4], range=[group_colors[1], group_colors[2], group_colors[3], group_colors[4]])
+              valid_clusters = [c for c in unique_clusters if not pd.isna(c)]
+              if len(valid_clusters) == 0:
+                  st.warning("No hay clusters válidos para mostrar. Mostrando PCA sin colorear por cluster.")
+                  # Crear gráfico sin clusters
+                  chart = (
+                      alt.Chart(agg_groups.dropna(subset=['PC1', 'PC2']))
+                      .mark_circle(size=80, color='steelblue')
+                      .encode(
+                          x=alt.X("PC1", title="Componente principal 1"),
+                          y=alt.Y("PC2", title="Componente principal 2"),
+                          tooltip=[col for col in [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period'] if col in agg_groups.columns]
+                      )
+                      .properties(width='container', height=400)
+                  )
+                  st.altair_chart(chart, use_container_width=True)
+                  return agg_groups
+              
+              color_domain = list(valid_clusters)
+              color_range = [group_colors.get(int(c), '#cccccc') for c in valid_clusters]
+              
+              color_scale = alt.Scale(domain=color_domain, range=color_range)
               chart = (
-                  alt.Chart(agg_groups)
+                  alt.Chart(agg_groups.dropna(subset=['PC1', 'PC2', 'cluster_grp']))
                   .mark_circle(size=80)
                   .encode(
                       x=alt.X("PC1", title="Componente principal 1"),
-                      y=alt.Y("PC2", title="Componente principal 2"),
+                      y=alt.Y("PC2", title="Componente principal 2"), 
                       color=alt.Color("cluster_grp:N", scale=color_scale, legend=alt.Legend(title="Cluster")),
-                      tooltip=[ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period', 'cluster_grp', 'promedio_acidez']
+                      tooltip=[col for col in [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period', 'cluster_grp'] if col in agg_groups.columns]
                   )
                   .properties(width='container', height=400)
                   .interactive()
               )
               st.altair_chart(chart, use_container_width=True)
+              st.success("Gráfico PCA generado exitosamente!")
+              
           except Exception as e:
-              st.info(f"No fue posible generar el gráfico PCA: {e}")
+              st.error(f"Error generando el gráfico PCA: {e}")
+              import traceback
+              st.text("Traceback:")
+              st.code(traceback.format_exc())
 
           # Mostrar agregados por variedad (sin separar fruto ni periodo)
           st.markdown("### Agregados por variedad")
@@ -1153,6 +1250,13 @@ def segmentacion_app(especie: str):
               agg_groups.to_excel(writer, index=False, sheet_name='Agregados_grupo')
               agg_variedad.to_excel(writer, index=False, sheet_name='Agregados_variedad')
           buf.seek(0)
+          
+          # Guardar datos agregados en session_state según la especie
+          if especie_key == "Ciruela":
+              st.session_state["agg_groups_plum"] = agg_groups
+          else:  # Nectarin
+              st.session_state["agg_groups_nect"] = agg_groups
+          
           st.download_button(
               label="📥 Descargar resultados como Excel",
               data=buf.getvalue(),

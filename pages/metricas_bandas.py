@@ -401,10 +401,16 @@ with tab3:
         if current_color not in ["amarilla", "blanca"]:
             current_color = "amarilla"
             
+        # Determinar índice de forma segura
+        try:
+            color_index = ["amarilla", "blanca"].index(current_color)
+        except ValueError:
+            color_index = 0  # Default a "amarilla" si no se encuentra
+            
         st.selectbox(
             "Color de pulpa por defecto (si falta la información):",
             options=["amarilla", "blanca"],
-            index=["amarilla", "blanca"].index(current_color),
+            index=color_index,
             key="default_color",
             help="Color de pulpa a usar cuando no está especificado en los datos"
         )
