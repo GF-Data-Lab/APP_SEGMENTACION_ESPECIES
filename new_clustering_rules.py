@@ -97,49 +97,65 @@ def aplicar_nuevas_reglas_clustering(df_processed, COL_BRIX, COL_ACIDEZ, ESPECIE
     # Limpiar claves de agrupación que no existen
     grp_keys = [col for col in grp_keys if col in df_processed.columns]
     
-    # 2. Función para obtener primer valor no nulo
-    def first_non_null(s):
-        idx = s.first_valid_index()
-        return s.loc[idx] if idx is not None else np.nan
+    # 3. Crear agregación usando múltiples pasos para evitar problemas
+    grouped = df_processed.groupby(grp_keys, dropna=False)
     
-    # 3. Crear agregación según nuevas reglas
-    agg_dict = {
-        COL_BRIX: (COL_BRIX, "mean"),  # BRIX promedio
-        COL_ACIDEZ: (COL_ACIDEZ, first_non_null),  # Acidez del primer fruto
-        "avg_mejillas": ("avg_mejillas", "mean"),  # Promedio de mejillas
-        "n_registros": (COL_BRIX, "size"),  # Número de registros
+    # Crear DataFrame base con las claves de agrupación
+    resumen = grouped.size().reset_index(name='n_registros')
+    
+    # Agregar métricas una por una
+    if COL_BRIX in df_processed.columns:
+        brix_mean = grouped[COL_BRIX].mean().reset_index()
+        brix_mean = brix_mean.rename(columns={COL_BRIX: 'brix_promedio'})
+        resumen = resumen.merge(brix_mean, on=grp_keys, how='left')
+    
+    # Acidez del primer fruto (usar first en lugar de función custom)
+    if COL_ACIDEZ in df_processed.columns:
+        acidez_first = grouped[COL_ACIDEZ].first().reset_index()
+        acidez_first = acidez_first.rename(columns={COL_ACIDEZ: 'acidez_primer_fruto'})
+        resumen = resumen.merge(acidez_first, on=grp_keys, how='left')
+    
+    # Promedio de mejillas
+    if "avg_mejillas" in df_processed.columns:
+        mejillas_mean = grouped["avg_mejillas"].mean().reset_index()
+        mejillas_mean = mejillas_mean.rename(columns={"avg_mejillas": "mejillas_promedio"})
+        resumen = resumen.merge(mejillas_mean, on=grp_keys, how='left')
+    
+    # Firmeza por puntos
+    firmeza_mapping = {
+        "Quilla": "quilla_promedio",
+        "Hombro": "hombro_promedio", 
+        "Punta": "punta_promedio"
     }
     
-    # Agregar columnas de firmeza por punto si existen
-    for punto in ["Firmeza quilla", "Firmeza hombro", "Firmeza punta"]:
+    for punto, nuevo_nombre in firmeza_mapping.items():
         if punto in df_processed.columns:
-            agg_dict[punto] = (punto, "mean")
+            firmeza_mean = grouped[punto].mean().reset_index()
+            firmeza_mean = firmeza_mean.rename(columns={punto: nuevo_nombre})
+            resumen = resumen.merge(firmeza_mean, on=grp_keys, how='left')
     
-    # Peso si existe
+    # Peso promedio
     for col in ["Peso (g)", "Peso", "Calibre"]:
         if col in df_processed.columns:
-            agg_dict["peso_promedio"] = (col, "mean")
+            peso_mean = grouped[col].mean().reset_index()
+            peso_mean = peso_mean.rename(columns={col: "peso_promedio"})
+            resumen = resumen.merge(peso_mean, on=grp_keys, how='left')
             break
     
-    # 4. Crear resumen por grupo
-    resumen = (
-        df_processed.groupby(grp_keys, dropna=False)
-        .agg(**agg_dict)
-        .reset_index()
-        .rename(columns={
-            COL_BRIX: "brix_promedio",
-            COL_ACIDEZ: "acidez_primer_fruto",
-            "avg_mejillas": "mejillas_promedio",
-            "Firmeza quilla": "quilla_promedio",
-            "Firmeza hombro": "hombro_promedio", 
-            "Firmeza punta": "punta_promedio"
-        })
-    )
+    # 5. Crear columnas faltantes con valores por defecto
+    columns_default = {
+        "brix_promedio": np.nan,
+        "acidez_primer_fruto": np.nan, 
+        "mejillas_promedio": np.nan,
+        "quilla_promedio": np.nan,
+        "hombro_promedio": np.nan,
+        "punta_promedio": np.nan,
+        "peso_promedio": np.nan
+    }
     
-    # 5. Crear columnas de firmeza por punto si no existen
-    for col in ["quilla_promedio", "hombro_promedio", "punta_promedio"]:
+    for col, default_val in columns_default.items():
         if col not in resumen.columns:
-            resumen[col] = np.nan
+            resumen[col] = default_val
     
     # 6. Calcular punto más débil
     puntos_cols = ["quilla_promedio", "hombro_promedio", "punta_promedio"]
@@ -193,11 +209,11 @@ def aplicar_nuevas_reglas_clustering(df_processed, COL_BRIX, COL_ACIDEZ, ESPECIE
             else:
                 rules = {}
             
-            # Aplicar clasificación para cada métrica
-            bandas_brix.append(clasificar_valor(row["brix_promedio"], rules.get("BRIX", [])))
-            bandas_mejillas.append(clasificar_valor(row["mejillas_promedio"], rules.get("FIRMEZA_MEJ", [])))
-            bandas_punto.append(clasificar_valor(row["firmeza_punto_debil"], rules.get("FIRMEZA_PUNTO", [])))
-            bandas_acidez.append(clasificar_valor(row["acidez_primer_fruto"], rules.get("ACIDEZ", [])))
+            # Aplicar clasificación para cada métrica (con validación de columnas)
+            bandas_brix.append(clasificar_valor(row.get("brix_promedio", np.nan), rules.get("BRIX", [])))
+            bandas_mejillas.append(clasificar_valor(row.get("mejillas_promedio", np.nan), rules.get("FIRMEZA_MEJ", [])))
+            bandas_punto.append(clasificar_valor(row.get("firmeza_punto_debil", np.nan), rules.get("FIRMEZA_PUNTO", [])))
+            bandas_acidez.append(clasificar_valor(row.get("acidez_primer_fruto", np.nan), rules.get("ACIDEZ", [])))
         
         resumen_df["banda_brix"] = bandas_brix
         resumen_df["banda_mejillas"] = bandas_mejillas
