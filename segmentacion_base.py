@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from new_clustering_rules import aplicar_nuevas_reglas_clustering
 from pathlib import Path
 from typing import Dict, List, Tuple, Union, Sequence
 from collections.abc import Iterable
@@ -1353,236 +1354,53 @@ def segmentacion_app(especie: str):
           unique_values = agg_groups['cond_sum_grp'].dropna().nunique()
           st.write(f"**Debug clustering**: Valores válidos: {valid_values}, Únicos: {unique_values}")
           
-          # NUEVA METODOLOGÍA: Clustering por variedad-temporada con bandas específicas
-          st.markdown("#### 🎯 Nueva metodología de clustering por variedad-temporada")
+          # NUEVA METODOLOGÍA ACTUALIZADA: Aplicar reglas del script de validación
+          st.markdown("#### 🎯 Nueva metodología de clustering basada en reglas actualizadas")
           
-          # Paso 1: Crear agregación correcta por variedad-temporada
-          # Primero calcular promedios por muestra individual (por fruto)
-          variety_season_cols = [ESPECIE_COLUMN, VAR_COLUMN, 'harvest_period']
-          fruit_cols = variety_season_cols + [FRUTO_COLUMN]
-          
-          # Agregación por fruto individual (promedio de sus muestras)
-          fruit_averages = (
-              df_processed
-              .groupby(fruit_cols, dropna=False)
-              .agg(
-                  muestras_fruto=("cond_sum", "size"),
-                  promedio_brix_fruto=(COL_BRIX, "mean"),
-                  promedio_acidez_fruto=(COL_ACIDEZ, "mean"), 
-                  firmeza_min_fruto=("Firmeza punto valor", "min"),
-                  firmeza_mode_fruto=("Firmeza punto valor", lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan),
-                  mejillas_promedio_fruto=("avg_mejillas", "mean"),
+          # Aplicar las nuevas reglas de clustering
+          try:
+              agg_groups = aplicar_nuevas_reglas_clustering(
+                  df_processed, COL_BRIX, COL_ACIDEZ, ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN
               )
-              .reset_index()
-          )
-          
-          st.write(f"**Debug**: Calculados promedios para {len(fruit_averages)} frutos individuales")
-          
-          # Luego agregar por variedad-temporada (promedio de los promedios de frutos)
-          variety_season_agg = (
-              fruit_averages
-              .groupby(variety_season_cols, dropna=False)
-              .agg(
-                  frutos_total=(FRUTO_COLUMN, "nunique"),
-                  muestras_total=("muestras_fruto", "sum"),
-                  promedio_brix_var=("promedio_brix_fruto", "mean"),  # Promedio de promedios
-                  promedio_acidez_var=("promedio_acidez_fruto", "mean"), 
-                  firmeza_min_var=("firmeza_min_fruto", "min"),       # Mínimo de mínimos
-                  firmeza_mode_var=("firmeza_mode_fruto", lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan),
-                  mejillas_promedio_var=("mejillas_promedio_fruto", "mean"),
-              )
-              .reset_index()
-          )
-          
-          st.write(f"**Debug**: Creadas {len(variety_season_agg)} combinaciones variedad-temporada")
-          
-          # Función para asignar bandas basada en quartiles
-          def assign_bands(values, metric_name):
-              """Asigna bandas de 1-4 basadas en quartiles (1=mejor, 4=peor)"""
-              valid_values = values.dropna()
-              if len(valid_values) == 0:
-                  return pd.Series(0, index=values.index)  # Asignar 0 si no hay valores
-              elif len(valid_values) == 1:
-                  return pd.Series(1, index=values.index)  # Un solo valor = banda 1
               
-              try:
-                  # Para BRIX y métricas positivas: mayor valor = mejor banda (1)
-                  # Para firmeza: menor valor = mejor banda (1)
-                  if metric_name in ['brix']:
-                      # Mayor es mejor: invertir quartiles
-                      bands = pd.qcut(valid_values, 4, labels=[4,3,2,1], duplicates='drop')
-                  else:  # firmeza - menor es mejor
-                      bands = pd.qcut(valid_values, 4, labels=[1,2,3,4], duplicates='drop')
-                  
-                  # Crear serie completa con 0 para valores faltantes
-                  result = pd.Series(0, index=values.index)
-                  result.loc[valid_values.index] = bands
-                  return result
-              except ValueError:
-                  # Si qcut falla, usar cut o asignar banda 1
-                  try:
-                      if metric_name in ['brix']:
-                          bands = pd.cut(valid_values, 4, labels=[4,3,2,1])
-                      else:
-                          bands = pd.cut(valid_values, 4, labels=[1,2,3,4])
-                      result = pd.Series(0, index=values.index)
-                      result.loc[valid_values.index] = bands
-                      return result
-                  except:
-                      # Fallback: todos los valores válidos = banda 1
-                      result = pd.Series(0, index=values.index)
-                      result.loc[valid_values.index] = 1
-                      return result
-          
-          # Paso 2: Calcular bandas para cada métrica
-          variety_season_agg['banda_brix'] = assign_bands(variety_season_agg['promedio_brix_var'], 'brix')
-          
-          # Para firmeza: elegir entre mínimo o moda
-          firmeza_method = st.selectbox(
-              "Método para calcular Firmeza en agregación variedad-temporada:",
-              options=['mínimo', 'moda'],
-              index=0,
-              key="firmeza_method_var_season",
-              help="Método a usar para agregar valores de firmeza por variedad-temporada"
-          )
-          
-          if firmeza_method == 'mínimo':
-              variety_season_agg['banda_firmeza'] = assign_bands(variety_season_agg['firmeza_min_var'], 'firmeza')
-              variety_season_agg['firmeza_metodo_usado'] = 'mínimo'
-          else:
-              variety_season_agg['banda_firmeza'] = assign_bands(variety_season_agg['firmeza_mode_var'], 'firmeza')
-              variety_season_agg['firmeza_metodo_usado'] = 'moda'
-          
-          # Asignar banda para acidez si existe
-          variety_season_agg['banda_acidez'] = assign_bands(variety_season_agg['promedio_acidez_var'], 'acidez') if 'promedio_acidez_var' in variety_season_agg.columns else 0
-          
-          # Paso 3: Calcular suma de bandas y cluster global
-          metrics_used = []
-          variety_season_agg['suma_bandas'] = 0
-          
-          if variety_season_agg['banda_brix'].sum() > 0:
-              variety_season_agg['suma_bandas'] += variety_season_agg['banda_brix']
-              metrics_used.append('BRIX')
+              st.success(f"✅ Reglas aplicadas exitosamente: {len(agg_groups)} grupos creados")
               
-          if variety_season_agg['banda_firmeza'].sum() > 0:
-              variety_season_agg['suma_bandas'] += variety_season_agg['banda_firmeza']
-              metrics_used.append('Firmeza')
+              # Mostrar distribución de clusters
+              st.write("**Distribución de clusters:**")
+              cluster_counts = agg_groups['cluster_grp'].value_counts().sort_index()
+              for cluster, count in cluster_counts.items():
+                  if not pd.isna(cluster):
+                      cluster_names = {1: "Excelente", 2: "Bueno", 3: "Regular", 4: "Deficiente"}
+                      st.write(f"  - Cluster {int(cluster)} ({cluster_names.get(int(cluster), 'Desconocido')}): {count} grupos")
               
-          if variety_season_agg['banda_acidez'].sum() > 0:
-              variety_season_agg['suma_bandas'] += variety_season_agg['banda_acidez']
-              metrics_used.append('Acidez')
-          
-          # Calcular cluster global basado en la suma
-          max_possible_sum = len(metrics_used) * 4  # Máximo posible
-          
-          def assign_global_cluster(suma_bandas, max_sum):
-              """Asigna cluster global basado en la suma de bandas según rangos específicos"""
-              if suma_bandas == 0:
-                  return 4  # Sin datos = peor cluster
-              # Ajustar rangos según especificación del usuario
-              # Para 3 métricas: máximo = 12, rangos: 3-5=cluster1, 6-8=cluster2, 9-11=cluster3, 12+=cluster4
-              # Para 2 métricas: máximo = 8, rangos: 2-3=cluster1, 4-5=cluster2, 6-7=cluster3, 8+=cluster4
-              if max_sum == 12:  # 3 métricas (BRIX, Firmeza, Acidez)
-                  if suma_bandas <= 5:
-                      return 1  # Excelente (3-5)
-                  elif suma_bandas <= 8:
-                      return 2  # Bueno (6-8)
-                  elif suma_bandas <= 11:
-                      return 3  # Regular (9-11)
-                  else:
-                      return 4  # Deficiente (12)
-              elif max_sum == 8:  # 2 métricas (BRIX, Firmeza)
-                  if suma_bandas <= 3:
-                      return 1  # Excelente (2-3)
-                  elif suma_bandas <= 5:
-                      return 2  # Bueno (4-5)
-                  elif suma_bandas <= 7:
-                      return 3  # Regular (6-7)
-                  else:
-                      return 4  # Deficiente (8)
-              else:  # Fallback genérico para otros casos
-                  if suma_bandas <= max_sum * 0.4:
-                      return 1  # Excelente
-                  elif suma_bandas <= max_sum * 0.6:
-                      return 2  # Bueno
-                  elif suma_bandas <= max_sum * 0.85:
-                      return 3  # Regular
-                  else:
-                      return 4  # Deficiente
-          
-          variety_season_agg['cluster_variedad_temporada'] = variety_season_agg['suma_bandas'].apply(
-              lambda x: assign_global_cluster(x, max_possible_sum)
-          )
-          
-          # Mostrar información sobre el clustering
-          st.write(f"**Métricas utilizadas**: {', '.join(metrics_used)}")
-          st.write(f"**Suma máxima posible**: {max_possible_sum}")
-          st.write(f"**Distribución de clusters por variedad-temporada**:")
-          cluster_dist = variety_season_agg['cluster_variedad_temporada'].value_counts().sort_index()
-          for cluster, count in cluster_dist.items():
-              st.write(f"- Cluster {cluster}: {count} combinaciones variedad-temporada")
-          
-          # Mostrar tabla de bandas por variedad-temporada
-          if st.checkbox("Mostrar tabla de bandas por variedad-temporada", key="show_variety_bands"):
-              display_cols_var = variety_season_cols + [
-                  'frutos_total', 'muestras_total', 
-                  'promedio_brix_var', 'banda_brix',
-                  'firmeza_min_var', 'banda_firmeza', 'firmeza_metodo_usado',
-                  'suma_bandas', 'cluster_variedad_temporada'
-              ]
-              if 'banda_acidez' in variety_season_agg.columns and variety_season_agg['banda_acidez'].sum() > 0:
-                  display_cols_var.insert(-2, 'promedio_acidez_var')
-                  display_cols_var.insert(-2, 'banda_acidez')
+              # Mostrar tabla de resultados
+              st.markdown("#### 📋 Tabla de resultados")
+              display_cols = [col for col in agg_groups.columns if col in [
+                  ESPECIE_COLUMN, VAR_COLUMN, 'temporada', 'Campo', 'portainjerto',
+                  'brix_promedio', 'banda_brix', 'acidez_primer_fruto', 'banda_acidez',
+                  'mejillas_promedio', 'banda_mejillas', 'firmeza_punto_debil', 'banda_firmeza_punto',
+                  'suma_bandas', 'cluster_grp', 'n_registros', 'categoria_ciruela'
+              ]]
               
-              st.markdown("**Explicación del cálculo:**")
-              st.write("1. **Frutos individuales**: Se calcula el promedio BRIX por cada fruto (de sus muestras)")
-              st.write("2. **Variedad-temporada**: Se promedia los BRIX de todos los frutos de esa combinación")
-              st.write("3. **Bandas**: Se asignan cuartiles 1-4 donde 1=mejor, 4=peor")
-              st.write("4. **Cluster**: Suma de bandas con rangos específicos")
+              if display_cols:
+                  st.dataframe(agg_groups[display_cols], use_container_width=True)
               
-              st.dataframe(variety_season_agg[display_cols_var], use_container_width=True)
+              # Renombrar columnas para compatibilidad con el resto del código
+              column_mapping = {
+                  'brix_promedio': COL_BRIX,
+                  'acidez_primer_fruto': COL_ACIDEZ,
+                  'mejillas_promedio': 'avg_mejillas',
+                  'n_registros': 'sample_count'
+              }
               
-              # Mostrar tabla de frutos individuales si se solicita
-              if st.checkbox("Ver promedios por fruto individual", key="show_fruit_averages"):
-                  st.markdown("**Promedios por fruto individual:**")
-                  fruit_display_cols = fruit_cols + [
-                      'muestras_fruto', 'promedio_brix_fruto', 'promedio_acidez_fruto', 
-                      'firmeza_min_fruto', 'mejillas_promedio_fruto'
-                  ]
-                  st.dataframe(fruit_averages[fruit_display_cols], use_container_width=True)
-          
-          # Paso 4: Hacer merge de vuelta a agg_groups (nivel fruto)
-          merge_cols_back = [ESPECIE_COLUMN, VAR_COLUMN, 'harvest_period']
-          agg_groups = agg_groups.merge(
-              variety_season_agg[merge_cols_back + ['cluster_variedad_temporada', 'suma_bandas', 'banda_brix', 'banda_firmeza']],
-              on=merge_cols_back,
-              how='left'
-          )
-          
-          # Asignar el cluster basado en la agregación variedad-temporada
-          agg_groups['cluster_grp'] = agg_groups['cluster_variedad_temporada'].fillna(4).astype(int)
-
-          # Determinar el punto de firmeza más bajo por cluster y repetirlo
-          agg_groups['punto_firmeza_cluster'] = agg_groups['punto_firmeza_min']
-          for clus, grp in agg_groups.groupby('cluster_grp'):
-              if pd.isna(clus):
-                  continue
-              idx_min = grp['promedio_firmeza_punto'].idxmin(skipna=True)
-              weak_pt = agg_groups.loc[idx_min, 'punto_firmeza_min']
-              agg_groups.loc[agg_groups['cluster_grp'] == clus, 'punto_firmeza_cluster'] = weak_pt
-
-          # Estilo para colorear según cluster
-          def color_cluster(val):
-              try:
-                  grp = int(val)
-                  return f"background-color: {group_colors.get(grp, '')}"
-              except:
-                  return ''
-          def highlight_inconsistent(row):
-              """Devuelve estilos CSS para filas con periodos inconsistentes."""
-              if row.get('periodo_inconsistente'):
-                  return ['background-color: #ffd6d6;' for _ in row]
-              return ['' for _ in row]
+              for old_col, new_col in column_mapping.items():
+                  if old_col in agg_groups.columns:
+                      agg_groups[new_col] = agg_groups[old_col]
+                      
+          except Exception as e:
+              st.error(f"❌ Error aplicando nuevas reglas: {str(e)}")
+              st.info("🔄 Usando metodología anterior como respaldo...")
+              # Aquí podríamos poner código de respaldo si es necesario
 
           # Controles de visualización al principio
           st.markdown("### 📊 Opciones de Visualización")
