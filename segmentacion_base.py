@@ -758,6 +758,8 @@ def segmentacion_app(especie: str):
                 st.switch_page('pages/metricas_bandas.py')
             if st.button('Detección Outliers 🎯'):
                 st.switch_page('pages/outliers.py')
+            if st.button('Verificar Cálculos 🔍'):
+                st.switch_page('pages/verificar_calculos.py')
 
     generar_menu()
 
@@ -1352,18 +1354,40 @@ def segmentacion_app(especie: str):
           # NUEVA METODOLOGÍA: Clustering por variedad-temporada con bandas específicas
           st.markdown("#### 🎯 Nueva metodología de clustering por variedad-temporada")
           
-          # Paso 1: Crear agregación por variedad-temporada (sin incluir fruto)
+          # Paso 1: Crear agregación correcta por variedad-temporada
+          # Primero calcular promedios por muestra individual (por fruto)
           variety_season_cols = [ESPECIE_COLUMN, VAR_COLUMN, 'harvest_period']
-          variety_season_agg = (
+          fruit_cols = variety_season_cols + [FRUTO_COLUMN]
+          
+          # Agregación por fruto individual (promedio de sus muestras)
+          fruit_averages = (
               df_processed
+              .groupby(fruit_cols, dropna=False)
+              .agg(
+                  muestras_fruto=("cond_sum", "size"),
+                  promedio_brix_fruto=(COL_BRIX, "mean"),
+                  promedio_acidez_fruto=(COL_ACIDEZ, "mean"), 
+                  firmeza_min_fruto=("Firmeza punto valor", "min"),
+                  firmeza_mode_fruto=("Firmeza punto valor", lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan),
+                  mejillas_promedio_fruto=("avg_mejillas", "mean"),
+              )
+              .reset_index()
+          )
+          
+          st.write(f"**Debug**: Calculados promedios para {len(fruit_averages)} frutos individuales")
+          
+          # Luego agregar por variedad-temporada (promedio de los promedios de frutos)
+          variety_season_agg = (
+              fruit_averages
               .groupby(variety_season_cols, dropna=False)
               .agg(
-                  muestras_total=("cond_sum", "size"),
-                  promedio_brix_var=(COL_BRIX, "mean"),
-                  promedio_acidez_var=(COL_ACIDEZ, "mean"), 
-                  firmeza_min_var=("Firmeza punto valor", "min"),
-                  firmeza_mode_var=("Firmeza punto valor", lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan),
-                  mejillas_promedio_var=("avg_mejillas", "mean"),
+                  frutos_total=(FRUTO_COLUMN, "nunique"),
+                  muestras_total=("muestras_fruto", "sum"),
+                  promedio_brix_var=("promedio_brix_fruto", "mean"),  # Promedio de promedios
+                  promedio_acidez_var=("promedio_acidez_fruto", "mean"), 
+                  firmeza_min_var=("firmeza_min_fruto", "min"),       # Mínimo de mínimos
+                  firmeza_mode_var=("firmeza_mode_fruto", lambda x: x.mode().iloc[0] if not x.mode().empty else np.nan),
+                  mejillas_promedio_var=("mejillas_promedio_fruto", "mean"),
               )
               .reset_index()
           )
@@ -1499,7 +1523,8 @@ def segmentacion_app(especie: str):
           # Mostrar tabla de bandas por variedad-temporada
           if st.checkbox("Mostrar tabla de bandas por variedad-temporada", key="show_variety_bands"):
               display_cols_var = variety_season_cols + [
-                  'muestras_total', 'promedio_brix_var', 'banda_brix',
+                  'frutos_total', 'muestras_total', 
+                  'promedio_brix_var', 'banda_brix',
                   'firmeza_min_var', 'banda_firmeza', 'firmeza_metodo_usado',
                   'suma_bandas', 'cluster_variedad_temporada'
               ]
@@ -1507,7 +1532,22 @@ def segmentacion_app(especie: str):
                   display_cols_var.insert(-2, 'promedio_acidez_var')
                   display_cols_var.insert(-2, 'banda_acidez')
               
+              st.markdown("**Explicación del cálculo:**")
+              st.write("1. **Frutos individuales**: Se calcula el promedio BRIX por cada fruto (de sus muestras)")
+              st.write("2. **Variedad-temporada**: Se promedia los BRIX de todos los frutos de esa combinación")
+              st.write("3. **Bandas**: Se asignan cuartiles 1-4 donde 1=mejor, 4=peor")
+              st.write("4. **Cluster**: Suma de bandas con rangos específicos")
+              
               st.dataframe(variety_season_agg[display_cols_var], use_container_width=True)
+              
+              # Mostrar tabla de frutos individuales si se solicita
+              if st.checkbox("Ver promedios por fruto individual", key="show_fruit_averages"):
+                  st.markdown("**Promedios por fruto individual:**")
+                  fruit_display_cols = fruit_cols + [
+                      'muestras_fruto', 'promedio_brix_fruto', 'promedio_acidez_fruto', 
+                      'firmeza_min_fruto', 'mejillas_promedio_fruto'
+                  ]
+                  st.dataframe(fruit_averages[fruit_display_cols], use_container_width=True)
           
           # Paso 4: Hacer merge de vuelta a agg_groups (nivel fruto)
           merge_cols_back = [ESPECIE_COLUMN, VAR_COLUMN, 'harvest_period']
@@ -1843,14 +1883,26 @@ def segmentacion_app(especie: str):
                   # Hacer merge con agg_groups para obtener cluster_grp
                   merge_cols = [col for col in [ESPECIE_COLUMN, VAR_COLUMN, FRUTO_COLUMN, 'harvest_period'] if col in df_individual.columns and col in agg_groups.columns]
                   
-                  if merge_cols:
-                      df_individual = df_individual.merge(
-                          agg_groups[merge_cols + ['cluster_grp']],
-                          on=merge_cols,
-                          how='left'
-                      )
+                  # Verificar que cluster_grp existe en agg_groups
+                  if 'cluster_grp' not in agg_groups.columns:
+                      st.error("Error: columna 'cluster_grp' no encontrada en agg_groups")
+                      df_individual['cluster_grp'] = 1
+                  elif merge_cols and len(merge_cols) >= 2:  # Necesitamos al menos 2 columnas para merge
+                      try:
+                          st.write(f"**Debug merge**: Usando columnas: {merge_cols}")
+                          df_individual = df_individual.merge(
+                              agg_groups[merge_cols + ['cluster_grp']],
+                              on=merge_cols,
+                              how='left'
+                          )
+                          # Rellenar valores NaN con cluster 4 (deficiente)
+                          df_individual['cluster_grp'] = df_individual['cluster_grp'].fillna(4)
+                      except Exception as e:
+                          st.error(f"Error en merge: {e}")
+                          df_individual['cluster_grp'] = 1
                   else:
-                      # Si no hay columnas para merge, asignar cluster 1 a todos
+                      # Si no hay suficientes columnas para merge, asignar cluster 1 a todos
+                      st.warning("No hay suficientes columnas para hacer merge, asignando cluster 1 a todas las muestras")
                       df_individual['cluster_grp'] = 1
                   
                   # Mostrar estadísticas
@@ -2015,11 +2067,13 @@ def segmentacion_app(especie: str):
               agg_variedad.to_excel(writer, index=False, sheet_name='Agregados_variedad')
           buf.seek(0)
           
-          # Guardar datos agregados en session_state según la especie
+          # Guardar datos agregados y procesados en session_state según la especie
           if especie_key == "Ciruela":
               st.session_state["agg_groups_plum"] = agg_groups
+              st.session_state["df_processed_plum"] = df_processed
           else:  # Nectarin
               st.session_state["agg_groups_nect"] = agg_groups
+              st.session_state["df_processed_nect"] = df_processed
           
           st.download_button(
               label="📥 Descargar resultados como Excel",

@@ -52,6 +52,8 @@ def generarMenu():
             st.switch_page('pages/metricas_bandas.py')
         if st.button('Detección Outliers 🎯'):
             st.switch_page('pages/outliers.py')
+        if st.button('Verificar Cálculos 🔍'):
+            st.switch_page('pages/verificar_calculos.py')
 generarMenu()
 
 st.title("🔍 Análisis Exploratorio y Clustering de Carozos")

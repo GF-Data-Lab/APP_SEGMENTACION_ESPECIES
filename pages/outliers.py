@@ -48,6 +48,8 @@ def generar_menu():
             st.switch_page('pages/metricas_bandas.py')
         if st.button('Detección Outliers 🎯', type="primary"):
             st.switch_page('pages/outliers.py')
+        if st.button('Verificar Cálculos 🔍'):
+            st.switch_page('pages/verificar_calculos.py')
 
 def detectar_outliers_zscore(df, columns, threshold=2.0):
     """Detecta outliers usando Z-Score"""
