@@ -50,6 +50,8 @@ def generar_menu():
             st.switch_page('pages/outliers.py')
         if st.button('Verificar Cálculos 🔍'):
             st.switch_page('pages/verificar_calculos.py')
+        if st.button('Evolución Variedad 📈'):
+            st.switch_page('pages/evolucion_variedad.py')
 
 def detectar_outliers_zscore(df, columns, threshold=2.0):
     """Detecta outliers usando Z-Score"""

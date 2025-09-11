@@ -69,6 +69,8 @@ def generarMenu():
             st.switch_page('pages/outliers.py')
         if st.button('Verificar Cálculos 🔍'):
             st.switch_page('pages/verificar_calculos.py')
+        if st.button('Evolución Variedad 📈'):
+            st.switch_page('pages/evolucion_variedad.py')
 
 generarMenu()
 
