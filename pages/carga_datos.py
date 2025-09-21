@@ -1,55 +1,12 @@
 import streamlit as st
 import pandas as pd
-from utils import show_logo
+from common_styles import configure_page, generarMenu
 
-# Configuración de la página
-def configurar_pagina():
-    st.set_page_config(page_title="Carga de archivos", page_icon="📁", layout="wide")
-    st.markdown(
-        """
-        <style>
-          [data-testid="stSidebar"] div.stButton > button {
-            background-color: #D32F2F !important;
-            color: white !important;
-            border: none !important;
-          }
-          [data-testid="stSidebar"] div.stButton > button:hover {
-            background-color: #B71C1C !important;
-          }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def generar_menu():
-    with st.sidebar:
-        show_logo()
-        if st.button('Página de Inicio 🏚️'):
-            st.switch_page('app.py')
-        if st.button('Carga de archivos 📁'):
-            st.switch_page('pages/carga_datos.py')
-        if st.button('Segmentación Ciruela 🍑'):
-            st.switch_page('pages/segmentacion_ciruela.py')
-        if st.button('Segmentación Nectarina 🍑'):
-            st.switch_page('pages/segmentacion_nectarina.py')
-        if st.button('Modelo de Clasificación'):
-            st.switch_page('pages/Cluster_especies.py')
-        if st.button('Análisis exploratorio'):
-            st.switch_page('pages/analisis.py')
-        if st.button('Métricas y Bandas 📊'):
-            st.switch_page('pages/metricas_bandas.py')
-        if st.button('Detección Outliers 🎯'):
-            st.switch_page('pages/outliers.py')
-        if st.button('Verificar Cálculos 🔍'):
-            st.switch_page('pages/verificar_calculos.py')
-        if st.button('Evolución Variedad 📈'):
-            st.switch_page('pages/evolucion_variedad.py')
-
+# Configuración de la página con estilos unificados
+configure_page("Carga de archivos", "📁")
 
 def main():
-    configurar_pagina()
-    generar_menu()
+    generarMenu()
 
     st.title("Carga de datos")
     st.write("Sube los archivos Excel que se utilizarán en las páginas de segmentación.")
@@ -92,7 +49,6 @@ def main():
             st.download_button("💾 Guardar datos de cerezas", csv_cerezas, "cerezas_cargado.csv", "text/csv")
         except Exception as e:
             st.error(f"Error al leer el archivo de cerezas: {e}")
-
 
 if __name__ == "__main__":
     main()

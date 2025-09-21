@@ -1,5 +1,6 @@
 
 import streamlit as st
+from pathlib import Path
 from utils import show_logo  # Asegúrate de tener esta función que muestra el logo
 
 # Configuración de la página
@@ -56,38 +57,45 @@ st.markdown(
 )
 # Función para generar el menú con botones en la barra lateral
 def generarMenu():
+    cluster_page = Path("pages/Cluster_especies.py")
+    analisis_page = Path("pages/analisis.py")
+
     with st.sidebar:
-        # Mostrar el logo en la barra lateral
         show_logo()
+        boton_inicio = st.button("Pagina de Inicio")
+        boton_carga = st.button("Carga de archivos")
+        boton_ciruela = st.button("Segmentacion Ciruela")
+        boton_nectarina = st.button("Segmentacion Nectarina")
+        if cluster_page.exists():
+            boton_cluster = st.button("Modelo de Clasificacion")
+        else:
+            st.caption("Modelo de Clasificacion: pagina no disponible")
+            boton_cluster = False
+        if analisis_page.exists():
+            boton_analisis = st.button("Analisis exploratorio")
+        else:
+            st.caption("Analisis exploratorio: pagina no disponible")
+            boton_analisis = False
+        boton_metricas = st.button("Metricas y Bandas")
+        boton_outliers = st.button("Deteccion Outliers")
 
-        # Crear los botones debajo del logo en la barra lateral
-        boton_inicio = st.button('Página de Inicio 🏚️')
-        boton_carga = st.button('Carga de archivos 📁')
-        boton_ciruela = st.button('Segmentación Ciruela 🍑')
-        boton_nectarina = st.button('Segmentación Nectarina 🍑')
-        boton_cluster = st.button('Modelo de Clasificación')
-        boton_analisis = st.button('Análisis exploratorio')
-        boton_metricas = st.button('Métricas y Bandas 📊')
-        boton_outliers = st.button('Detección Outliers 🎯')
-    # Acción de los botones: redirigir a la página correspondiente
     if boton_inicio:
-        st.switch_page('app.py')  # Redirige a la página principal
+        st.switch_page("app.py")
     if boton_carga:
-        st.switch_page('pages/carga_datos.py')
+        st.switch_page("pages/carga_datos.py")
     if boton_ciruela:
-        st.switch_page('pages/segmentacion_ciruela.py')
+        st.switch_page("pages/segmentacion_ciruela.py")
     if boton_nectarina:
-        st.switch_page('pages/segmentacion_nectarina.py')
-    if boton_cluster:
-        st.switch_page('pages/Cluster_especies.py')
-    if boton_analisis:
-        st.switch_page('pages/analisis.py')
+        st.switch_page("pages/segmentacion_nectarina.py")
+    if boton_cluster and cluster_page.exists():
+        st.switch_page("pages/Cluster_especies.py")
+    if boton_analisis and analisis_page.exists():
+        st.switch_page("pages/analisis.py")
     if boton_metricas:
-        st.switch_page('pages/metricas_bandas.py')
+        st.switch_page("pages/metricas_bandas.py")
     if boton_outliers:
-        st.switch_page('pages/outliers.py')
-
-# Llamar a la función para generar el menú en la barra lateral
+        st.switch_page("pages/outliers.py")
+    # Llamar a la función para generar el menú en la barra lateral
 generarMenu()
 
 # ========================================================================================

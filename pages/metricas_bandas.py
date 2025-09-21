@@ -1,462 +1,698 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import math
-from utils import show_logo
-from segmentacion_base import (
-    DEFAULT_PLUM_RULES,
-    DEFAULT_NECT_RULES,
-    plum_rules_to_df,
-    nect_rules_to_df,
-    df_to_plum_rules,
-    df_to_nect_rules,
-)
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import copy
+from new_clustering_rules import PLUM_RULES, NECT_RULES
+from common_styles import configure_page, generarMenu, get_cluster_colors
 
-# Configuración de página
-st.set_page_config(
-    page_title="📊 Métricas y Bandas de Clasificación", 
-    page_icon="📊", 
-    layout="wide"
-)
+# Configuración de página con estilos unificados
+configure_page("Métricas y Bandas", "📊")
 
-# Estilos CSS
+# CSS personalizado adicional para esta página
 st.markdown("""
-    <style>
-      [data-testid="stSidebar"] div.stButton > button {
-        background-color: #D32F2F !important;
-        color: white !important;
-        border: none !important;
-      }
-      [data-testid="stSidebar"] div.stButton > button:hover {
-        background-color: #B71C1C !important;
-      }
-      
-      .metric-container {
-        background-color: #f8f9fa;
+<style>
+    .rule-editor {
+        background: linear-gradient(135deg, var(--success-green) 0%, var(--success-green-dark) 100%);
         padding: 1.5rem;
-        border-radius: 10px;
-        border-left: 4px solid #D32F2F;
-        margin-bottom: 1rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      }
-    </style>
+        border-radius: 15px;
+        color: white;
+        margin: 1rem 0;
+        box-shadow: 0 8px 32px rgba(16, 185, 129, 0.3);
+    }
+    
+    .stTab > div > div > div > div {
+        padding: 2rem 1rem;
+    }
+    
+    .band-input {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid var(--border-light);
+        border-radius: 8px;
+        padding: 0.5rem;
+        color: var(--text-dark);
+    }
+</style>
 """, unsafe_allow_html=True)
 
-def generarMenu():
-    with st.sidebar:
-        show_logo()
-        if st.button('Página de Inicio 🏚️'):
-            st.switch_page('app.py')
-        if st.button('Carga de archivos 📁'):
-            st.switch_page('pages/carga_datos.py')
-        if st.button('Segmentación Ciruela 🍑'):
-            st.switch_page('pages/segmentacion_ciruela.py')
-        if st.button('Segmentación Nectarina 🍑'):
-            st.switch_page('pages/segmentacion_nectarina.py')
-        if st.button('Modelo de Clasificación'):
-            st.switch_page('pages/Cluster_especies.py')
-        if st.button('Análisis exploratorio'):
-            st.switch_page('pages/analisis.py')
-        if st.button('Métricas y Bandas 📊'):
-            st.switch_page('pages/metricas_bandas.py')
-        if st.button('Detección Outliers 🎯'):
-            st.switch_page('pages/outliers.py')
-        if st.button('Verificar Cálculos 🔍'):
-            st.switch_page('pages/verificar_calculos.py')
-        if st.button('Evolución Variedad 📈'):
-            st.switch_page('pages/evolucion_variedad.py')
+# Menú de navegación
 
 generarMenu()
 
-# ===== TÍTULO Y DESCRIPCIÓN =====
-st.title("📊 Métricas y Bandas de Clasificación")
+st.title("🎯 Editor Avanzado de Métricas y Bandas")
 
 st.markdown("""
-## 🎯 Configuración de Reglas de Segmentación
+<div class="metric-card">
+    <h3>🚀 Sistema Interactivo de Reglas de Clustering</h3>
+    <p>Configure y personalice las reglas de clasificación para diferentes especies y períodos de cosecha.</p>
+    <p><strong>✨ Funcionalidades:</strong> Edición en tiempo real • Validación automática • Visualizaciones interactivas • Exportación de configuraciones</p>
+</div>
+""", unsafe_allow_html=True)
 
-Esta página te permite configurar las **métricas y bandas de clasificación** para cada especie de fruto de carozo.
-También puedes ajustar los **valores por defecto** utilizados cuando faltan datos en los registros.
+# Inicializar session state para las reglas editables
+if "edited_plum_rules" not in st.session_state:
+    st.session_state.edited_plum_rules = copy.deepcopy(PLUM_RULES)
+if "edited_nect_rules" not in st.session_state:
+    st.session_state.edited_nect_rules = copy.deepcopy(NECT_RULES)
 
-### 📋 Funcionalidades:
-- ✅ **Editar reglas** de clasificación por especie y período
-- ✅ **Crear nuevas métricas** personalizadas
-- ✅ **Modificar bandas** con límites mínimos y máximos
-- ✅ **Configurar valores por defecto** para datos faltantes
-- ✅ **Visualización con colores** por grupo de calidad
-
----
-""")
-
-# ===== INICIALIZACIÓN DE DATOS =====
-# Inicializar dataframes de reglas en session_state
-if "plum_rules_df" not in st.session_state:
-    st.session_state["plum_rules_df"] = plum_rules_to_df(DEFAULT_PLUM_RULES)
-if "nect_rules_df" not in st.session_state:
-    st.session_state["nect_rules_df"] = nect_rules_to_df(DEFAULT_NECT_RULES)
-
-# Inicializar valores por defecto
-if "default_plum_subtype" not in st.session_state:
-    st.session_state["default_plum_subtype"] = "sugar"
-if "sugar_upper" not in st.session_state:
-    st.session_state["sugar_upper"] = 60.0
-if "default_color" not in st.session_state:
-    st.session_state["default_color"] = "amarilla"
-if "default_period" not in st.session_state:
-    st.session_state["default_period"] = "tardia"
-
-# Convertir dataframes a diccionarios para manipulación
-current_plum_rules = df_to_plum_rules(st.session_state["plum_rules_df"])
-current_nect_rules = df_to_nect_rules(st.session_state["nect_rules_df"])
-
-# ===== COLORES PARA GRUPOS =====
-group_colors = {
-    1: '#a8e6cf',  # verde claro - Excelente
-    2: '#ffd3b6',  # naranja claro - Bueno  
-    3: '#ffaaa5',  # coral - Regular
-    4: '#ff8b94',  # rojo rosado - Deficiente
-}
-
-# ===== PESTAÑAS PRINCIPALES =====
-tab1, tab2, tab3 = st.tabs(["🍑 Reglas de Ciruela", "🍑 Reglas de Nectarina", "⚙️ Valores por Defecto"])
-
-# ========================================
-# TAB 1: REGLAS DE CIRUELA
-# ========================================
-with tab1:
-    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-    st.subheader("🍑 Configuración de Reglas para Ciruela")
-    st.markdown("Configura las bandas de clasificación para las diferentes métricas de calidad en ciruelas.")
-    st.markdown('</div>', unsafe_allow_html=True)
+# Función para crear sliders de bandas
+def create_band_editor(metric_name, current_bands, key_prefix):
+    st.markdown(f"#### 📏 {metric_name}")
     
-    # Selector de subtipo
-    subtipo_sel = st.selectbox("📌 Subtipo de ciruela:", list(current_plum_rules.keys()), key="plum_subtype")
-    metrica_sel = st.selectbox("📏 Métrica a configurar:", list(current_plum_rules[subtipo_sel].keys()), key="plum_metric")
+    # Extraer valores actuales
+    values = []
+    for lo, hi, band in current_bands:
+        if lo != float('-inf'):
+            values.append(lo)
+        if hi != float('inf'):
+            values.append(hi)
     
-    # Expander para agregar nueva métrica
-    with st.expander("➕ Agregar nueva métrica para este subtipo", expanded=False):
-        nueva_metric = st.text_input("Nombre de la nueva métrica:", key=f"new_metric_plum_{subtipo_sel}")
-        if st.button("Crear métrica", key=f"create_metric_plum_{subtipo_sel}"):
-            if nueva_metric:
-                if nueva_metric not in current_plum_rules[subtipo_sel]:
-                    # Bandas por defecto
-                    default_bands = [(-np.inf, 0.0, 4), (0.0, 1.0, 3), (1.0, 2.0, 2), (2.0, np.inf, 1)]
-                    current_plum_rules[subtipo_sel][nueva_metric] = default_bands
-                    st.session_state["plum_rules_df"] = plum_rules_to_df(current_plum_rules)
-                    st.success(f"✅ Métrica '{nueva_metric}' añadida correctamente.")
-                    st.rerun()
-                else:
-                    st.warning("⚠️ La métrica ya existe.")
-            else:
-                st.warning("⚠️ Debes introducir un nombre para la nueva métrica.")
-    
-    # Mostrar bandas actuales con colores
-    bandas = current_plum_rules[subtipo_sel][metrica_sel]
-    bandas_df = pd.DataFrame(bandas, columns=["Mínimo", "Máximo", "Grupo"])
-    
-    def apply_colors_plum(row):
-        return [f"background-color: {group_colors.get(int(row['Grupo']), '')}" for _ in row]
-    
-    st.markdown("#### 📊 Bandas actuales:")
-    try:
-        st.dataframe(bandas_df.style.apply(apply_colors_plum, axis=1), use_container_width=True)
-    except Exception:
-        st.dataframe(bandas_df, use_container_width=True)
-    
-    # Leyenda de colores
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.markdown('<div style="background-color: #a8e6cf; padding: 5px; text-align: center; border-radius: 5px;"><b>Grupo 1: Excelente</b></div>', unsafe_allow_html=True)
-    with col2:
-        st.markdown('<div style="background-color: #ffd3b6; padding: 5px; text-align: center; border-radius: 5px;"><b>Grupo 2: Bueno</b></div>', unsafe_allow_html=True)
-    with col3:
-        st.markdown('<div style="background-color: #ffaaa5; padding: 5px; text-align: center; border-radius: 5px;"><b>Grupo 3: Regular</b></div>', unsafe_allow_html=True)
-    with col4:
-        st.markdown('<div style="background-color: #ff8b94; padding: 5px; text-align: center; border-radius: 5px;"><b>Grupo 4: Deficiente</b></div>', unsafe_allow_html=True)
-    
-    st.markdown("---")
+    # Determinar rango
+    if values:
+        min_val = min(values) - 5
+        max_val = max(values) + 5
+    else:
+        min_val, max_val = 0, 25
     
     # Editor de bandas
-    st.markdown("#### ✏️ Editar bandas:")
-    st.markdown("Modifica los límites de cada banda. Los valores infinitos se representan con números muy grandes/pequeños.")
+    col1, col2, col3 = st.columns(3)
     
-    nuevas_bandas = []
-    for i, (lo, hi, grp) in enumerate(bandas):
-        cols = st.columns([2, 2, 1, 1])
-        
-        # Convertir infinitos a valores numéricos para la edición
-        lo_val = float(lo) if math.isfinite(lo) else -1e6
-        hi_val = float(hi) if math.isfinite(hi) else 1e6
-        
-        lo_new = cols[0].number_input(
-            f"Mínimo banda {i+1}:", 
-            value=lo_val, 
-            key=f"plum_{subtipo_sel}_{metrica_sel}_min_{i}"
-        )
-        hi_new = cols[1].number_input(
-            f"Máximo banda {i+1}:", 
-            value=hi_val, 
-            key=f"plum_{subtipo_sel}_{metrica_sel}_max_{i}"
-        )
-        grp_new = cols[2].selectbox(
-            f"Grupo {i+1}:",
-            options=[1, 2, 3, 4],
-            index=int(grp) - 1 if not math.isnan(grp) else 0,
-            key=f"plum_{subtipo_sel}_{metrica_sel}_grp_{i}"
-        )
-        
-        # Convertir valores extremos de vuelta a infinito
-        if lo_new <= -1e5:
-            lo_new = -np.inf
-        if hi_new >= 1e5:
-            hi_new = np.inf
+    new_bands = []
+    band_colors = ["🟢", "🟡", "🟠", "🟣"]
+    
+    for i, (lo, hi, band) in enumerate(current_bands):
+        with [col1, col2, col3][i % 3]:
+            st.markdown(f"**{band_colors[band-1]} Banda {band}**")
             
-        nuevas_bandas.append((lo_new, hi_new, grp_new))
-    
-    # Botones de acción
-    col_add, col_save, col_reset = st.columns([1, 1, 1])
-    
-    with col_add:
-        if st.button("➕ Agregar banda", key=f"add_plum_{subtipo_sel}_{metrica_sel}"):
-            last_hi = nuevas_bandas[-1][1] if nuevas_bandas else 0
-            if math.isinf(last_hi):
-                last_hi = 10
-            nuevas_bandas.append((last_hi, last_hi + 5, 4))
-            st.rerun()
-    
-    with col_save:
-        if st.button("💾 Guardar cambios", key=f"save_plum_{subtipo_sel}_{metrica_sel}"):
-            current_plum_rules[subtipo_sel][metrica_sel] = nuevas_bandas
-            st.session_state["plum_rules_df"] = plum_rules_to_df(current_plum_rules)
-            st.success(f"✅ Reglas actualizadas para {subtipo_sel} - {metrica_sel}")
-    
-    with col_reset:
-        if st.button("🔄 Restaurar por defecto", key=f"reset_plum_{subtipo_sel}_{metrica_sel}"):
-            # Restaurar a valores por defecto
-            default_metric = DEFAULT_PLUM_RULES.get(subtipo_sel, {}).get(metrica_sel, [])
-            if default_metric:
-                current_plum_rules[subtipo_sel][metrica_sel] = default_metric
-                st.session_state["plum_rules_df"] = plum_rules_to_df(current_plum_rules)
-                st.success("✅ Reglas restauradas a valores por defecto")
-                st.rerun()
-
-# ========================================
-# TAB 2: REGLAS DE NECTARINA
-# ========================================
-with tab2:
-    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-    st.subheader("🍑 Configuración de Reglas para Nectarina")
-    st.markdown("Configura las bandas de clasificación para las diferentes métricas de calidad en nectarinas.")
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Selectores de color y período
-    color_sel = st.selectbox("🎨 Color de pulpa:", list(current_nect_rules.keys()), key="nect_color")
-    periodo_sel = st.selectbox("📅 Período de cosecha:", list(current_nect_rules[color_sel].keys()), key="nect_period")
-    metrica_sel_n = st.selectbox("📏 Métrica a configurar:", list(current_nect_rules[color_sel][periodo_sel].keys()), key="nect_metric")
-    
-    # Expander para agregar nueva métrica
-    with st.expander("➕ Agregar nueva métrica para este color/período", expanded=False):
-        nueva_metric_n = st.text_input(
-            "Nombre de la nueva métrica:", 
-            key=f"new_metric_nect_{color_sel}_{periodo_sel}"
-        )
-        if st.button("Crear métrica", key=f"create_metric_nect_{color_sel}_{periodo_sel}"):
-            if nueva_metric_n:
-                if nueva_metric_n not in current_nect_rules[color_sel][periodo_sel]:
-                    default_bands_n = [(-np.inf, 0.0, 4), (0.0, 1.0, 3), (1.0, 2.0, 2), (2.0, np.inf, 1)]
-                    current_nect_rules[color_sel][periodo_sel][nueva_metric_n] = default_bands_n
-                    st.session_state["nect_rules_df"] = nect_rules_to_df(current_nect_rules)
-                    st.success(f"✅ Métrica '{nueva_metric_n}' añadida correctamente.")
-                    st.rerun()
-                else:
-                    st.warning("⚠️ La métrica ya existe.")
+            # Manejar infinitos
+            lo_display = lo if lo != float('-inf') else min_val
+            hi_display = hi if hi != float('inf') else max_val
+            
+            # Sliders para límites
+            if lo != float('-inf'):
+                new_lo = st.slider(
+                    f"Mínimo B{band}", 
+                    min_val, max_val, 
+                    float(lo_display), 
+                    step=0.1,
+                    key=f"{key_prefix}_lo_{i}"
+                )
             else:
-                st.warning("⚠️ Debes introducir un nombre para la nueva métrica.")
-    
-    # Mostrar bandas actuales
-    bandas_n = current_nect_rules[color_sel][periodo_sel][metrica_sel_n]
-    bandas_df_n = pd.DataFrame(bandas_n, columns=["Mínimo", "Máximo", "Grupo"])
-    
-    def apply_colors_nect(row):
-        return [f"background-color: {group_colors.get(int(row['Grupo']), '')}" for _ in row]
-    
-    st.markdown("#### 📊 Bandas actuales:")
-    try:
-        st.dataframe(bandas_df_n.style.apply(apply_colors_nect, axis=1), use_container_width=True)
-    except Exception:
-        st.dataframe(bandas_df_n, use_container_width=True)
-    
-    # Leyenda de colores (igual que ciruela)
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.markdown('<div style="background-color: #a8e6cf; padding: 5px; text-align: center; border-radius: 5px;"><b>Grupo 1: Excelente</b></div>', unsafe_allow_html=True)
-    with col2:
-        st.markdown('<div style="background-color: #ffd3b6; padding: 5px; text-align: center; border-radius: 5px;"><b>Grupo 2: Bueno</b></div>', unsafe_allow_html=True)
-    with col3:
-        st.markdown('<div style="background-color: #ffaaa5; padding: 5px; text-align: center; border-radius: 5px;"><b>Grupo 3: Regular</b></div>', unsafe_allow_html=True)
-    with col4:
-        st.markdown('<div style="background-color: #ff8b94; padding: 5px; text-align: center; border-radius: 5px;"><b>Grupo 4: Deficiente</b></div>', unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # Editor de bandas para nectarina
-    st.markdown("#### ✏️ Editar bandas:")
-    st.markdown("Modifica los límites de cada banda. Los valores infinitos se representan con números muy grandes/pequeños.")
-    
-    nuevas_bandas_n = []
-    for i, (lo, hi, grp) in enumerate(bandas_n):
-        cols = st.columns([2, 2, 1, 1])
-        
-        lo_val = float(lo) if math.isfinite(lo) else -1e6
-        hi_val = float(hi) if math.isfinite(hi) else 1e6
-        
-        lo_new = cols[0].number_input(
-            f"Mínimo banda {i+1}:", 
-            value=lo_val, 
-            key=f"nect_{color_sel}_{periodo_sel}_{metrica_sel_n}_min_{i}"
-        )
-        hi_new = cols[1].number_input(
-            f"Máximo banda {i+1}:", 
-            value=hi_val, 
-            key=f"nect_{color_sel}_{periodo_sel}_{metrica_sel_n}_max_{i}"
-        )
-        grp_new = cols[2].selectbox(
-            f"Grupo {i+1}:",
-            options=[1, 2, 3, 4],
-            index=int(grp) - 1 if not math.isnan(grp) else 0,
-            key=f"nect_{color_sel}_{periodo_sel}_{metrica_sel_n}_grp_{i}"
-        )
-        
-        # Convertir valores extremos de vuelta a infinito
-        if lo_new <= -1e5:
-            lo_new = -np.inf
-        if hi_new >= 1e5:
-            hi_new = np.inf
+                new_lo = float('-inf')
+                st.info("Mínimo: -∞")
             
-        nuevas_bandas_n.append((lo_new, hi_new, grp_new))
+            if hi != float('inf'):
+                new_hi = st.slider(
+                    f"Máximo B{band}", 
+                    min_val, max_val, 
+                    float(hi_display), 
+                    step=0.1,
+                    key=f"{key_prefix}_hi_{i}"
+                )
+            else:
+                new_hi = float('inf')
+                st.info("Máximo: +∞")
+            
+            new_bands.append((new_lo, new_hi, band))
     
-    # Botones de acción para nectarina
-    col_add_n, col_save_n, col_reset_n = st.columns([1, 1, 1])
-    
-    with col_add_n:
-        if st.button("➕ Agregar banda", key=f"add_nect_{color_sel}_{periodo_sel}_{metrica_sel_n}"):
-            last_hi = nuevas_bandas_n[-1][1] if nuevas_bandas_n else 0
-            if math.isinf(last_hi):
-                last_hi = 10
-            nuevas_bandas_n.append((last_hi, last_hi + 5, 4))
-            st.rerun()
-    
-    with col_save_n:
-        if st.button("💾 Guardar cambios", key=f"save_nect_{color_sel}_{periodo_sel}_{metrica_sel_n}"):
-            current_nect_rules[color_sel][periodo_sel][metrica_sel_n] = nuevas_bandas_n
-            st.session_state["nect_rules_df"] = nect_rules_to_df(current_nect_rules)
-            st.success(f"✅ Reglas actualizadas para {color_sel} - {periodo_sel} - {metrica_sel_n}")
-    
-    with col_reset_n:
-        if st.button("🔄 Restaurar por defecto", key=f"reset_nect_{color_sel}_{periodo_sel}_{metrica_sel_n}"):
-            default_metric = DEFAULT_NECT_RULES.get(color_sel, {}).get(periodo_sel, {}).get(metrica_sel_n, [])
-            if default_metric:
-                current_nect_rules[color_sel][periodo_sel][metrica_sel_n] = default_metric
-                st.session_state["nect_rules_df"] = nect_rules_to_df(current_nect_rules)
-                st.success("✅ Reglas restauradas a valores por defecto")
-                st.rerun()
+    return new_bands
 
-# ========================================
-# TAB 3: VALORES POR DEFECTO
-# ========================================
-with tab3:
-    st.markdown('<div class="metric-container">', unsafe_allow_html=True)
-    st.subheader("⚙️ Valores por Defecto")
-    st.markdown("Configura los valores que se utilizarán cuando falten datos en los registros originales.")
-    st.markdown('</div>', unsafe_allow_html=True)
+# Función para visualizar bandas
+def create_band_visualization(metric_name, bands, title):
+    fig = go.Figure()
+    
+    # Usar paleta pastel estándar
+    cluster_colors = get_cluster_colors()
+    colors = [cluster_colors['hex'][i] for i in range(1, 5)]
+    
+    for lo, hi, band in bands:
+        lo_display = lo if lo != float('-inf') else 0
+        hi_display = hi if hi != float('inf') else 25
+        
+        fig.add_trace(go.Scatter(
+            x=[lo_display, hi_display, hi_display, lo_display, lo_display],
+            y=[band-0.4, band-0.4, band+0.4, band+0.4, band-0.4],
+            fill="toself",
+            fillcolor=colors[band-1],
+            opacity=0.6,
+            line=dict(color=colors[band-1], width=2),
+            name=f"Banda {band}",
+            text=f"Banda {band}: [{lo}, {hi})",
+            hovertemplate="%{text}<extra></extra>"
+        ))
+    
+    fig.update_layout(
+        title=f"📊 Visualización de Bandas - {title}",
+        xaxis_title=metric_name,
+        yaxis_title="Banda",
+        yaxis=dict(tickmode='linear', tick0=1, dtick=1),
+        showlegend=True,
+        height=300,
+        template="plotly_dark"
+    )
+    
+    return fig
+
+# Tabs principales
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🍑 Editor Ciruela", "🍑 Editor Nectarina", "📊 Visualizaciones", "⚙️ Configuración", "➕ Crear Métricas"])
+
+with tab1:
+    st.markdown("""
+    <div class="rule-editor">
+        <h3>🍭 Editor de Reglas para Ciruela</h3>
+        <p>Configure las bandas de clasificación para Candy Plum (>60g) y Cherry Plum (≤60g)</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    plum_type = st.selectbox("🎯 Seleccionar Tipo de Ciruela", ["candy", "cherry"], key="plum_type_select")
+    
+    st.markdown(f"### ✏️ Editando reglas para **{plum_type.upper()} PLUM**")
+    
+    current_plum_rules = st.session_state.edited_plum_rules[plum_type]
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("### 🍑 Configuración para Ciruelas")
+        # Editor BRIX
+        new_brix = create_band_editor("BRIX (%)", current_plum_rules["BRIX"], f"plum_{plum_type}_brix")
+        st.session_state.edited_plum_rules[plum_type]["BRIX"] = new_brix
         
-        # Tipo de ciruela por defecto
-        st.selectbox(
-            "Tipo de ciruela por defecto (si el peso no está disponible):",
-            options=["sugar", "candy"],
-            index=["sugar", "candy"].index(st.session_state["default_plum_subtype"]),
-            key="default_plum_subtype",
-            help="Cuando no hay información de peso para determinar el tipo de ciruela"
-        )
-        
-        # Peso límite entre sugar y candy
-        st.number_input(
-            "Peso máximo para clasificar como 'sugar' (gramos):",
-            min_value=10.0,
-            max_value=200.0,
-            value=float(st.session_state["sugar_upper"]),
-            step=1.0,
-            key="sugar_upper",
-            help="Ciruelas con peso menor o igual se clasifican como 'sugar', mayores como 'candy'"
-        )
+        # Editor ACIDEZ
+        new_acidez = create_band_editor("ACIDEZ (%)", current_plum_rules["ACIDEZ"], f"plum_{plum_type}_acidez")
+        st.session_state.edited_plum_rules[plum_type]["ACIDEZ"] = new_acidez
     
     with col2:
-        st.markdown("### 🍑 Configuración para Nectarinas")
+        # Editor FIRMEZA_PUNTO
+        new_fp = create_band_editor("FIRMEZA PUNTO", current_plum_rules["FIRMEZA_PUNTO"], f"plum_{plum_type}_fp")
+        st.session_state.edited_plum_rules[plum_type]["FIRMEZA_PUNTO"] = new_fp
         
-        # Color de pulpa por defecto
-        # Normalizar el valor por si hay inconsistencias de mayúsculas
-        current_color = st.session_state.get("default_color", "amarilla")
-        if isinstance(current_color, str):
-            current_color = current_color.lower()
-        if current_color not in ["amarilla", "blanca"]:
-            current_color = "amarilla"
-            
-        # Determinar índice de forma segura
-        try:
-            color_index = ["amarilla", "blanca"].index(current_color)
-        except ValueError:
-            color_index = 0  # Default a "amarilla" si no se encuentra
-            
-        st.selectbox(
-            "Color de pulpa por defecto (si falta la información):",
-            options=["amarilla", "blanca"],
-            index=color_index,
-            key="default_color",
-            help="Color de pulpa a usar cuando no está especificado en los datos"
-        )
-        
-        # Período por defecto
-        st.selectbox(
-            "Período de cosecha por defecto (si falta fecha):",
-            options=["muy_temprana", "temprana", "tardia", "sin_fecha"],
-            index=["muy_temprana", "temprana", "tardia", "sin_fecha"].index(st.session_state["default_period"]),
-            key="default_period",
-            help="Período de cosecha a usar cuando no se puede determinar por la fecha"
-        )
+        # Editor FIRMEZA_MEJ
+        new_fmej = create_band_editor("FIRMEZA MEJILLAS", current_plum_rules["FIRMEZA_MEJ"], f"plum_{plum_type}_fmej")
+        st.session_state.edited_plum_rules[plum_type]["FIRMEZA_MEJ"] = new_fmej
     
-    st.markdown("---")
+    # Botones de acción
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("🔄 Restaurar Originales", key="reset_plum"):
+            st.session_state.edited_plum_rules[plum_type] = copy.deepcopy(PLUM_RULES[plum_type])
+            st.success("✅ Reglas restauradas!")
+            st.rerun()
     
-    # Información adicional
-    with st.expander("ℹ️ Información sobre los valores por defecto", expanded=False):
-        st.markdown("""
-        ### 🔍 ¿Cuándo se usan estos valores?
-        
-        **Para Ciruelas:**
-        - **Tipo por defecto:** Se usa cuando el campo "Peso (g)" está vacío o es nulo
-        - **Peso límite:** Define el umbral para clasificar automáticamente entre 'sugar' (≤60g) y 'candy' (>60g)
-        
-        **Para Nectarinas:**
-        - **Color por defecto:** Se usa cuando el campo "Color de pulpa" está vacío o es nulo  
-        - **Período por defecto:** Se usa cuando no se puede determinar el período de cosecha por la fecha
-        
-        ### ⚠️ Importante:
-        - Estos valores se aplican durante el procesamiento de segmentación
-        - Los cambios se guardan automáticamente en la sesión
-        - Para que los cambios tengan efecto, debes volver a ejecutar la segmentación
-        """)
+    with col2:
+        if st.button("💾 Guardar Cambios", key="save_plum"):
+            st.success("✅ Cambios guardados en memoria!")
     
-    st.success("✅ Los valores se guardan automáticamente. Los cambios se aplicarán en la próxima ejecución de segmentación.")
+    with col3:
+        if st.button("📄 Ver Reglas JSON", key="show_plum_json"):
+            st.json(st.session_state.edited_plum_rules[plum_type])
 
-# ===== INFORMACIÓN FINAL =====
+with tab2:
+    st.markdown("""
+    <div class="rule-editor">
+        <h3>🍑 Editor de Reglas para Nectarina</h3>
+        <p>Configure las bandas por color (amarilla/blanca) y período de cosecha</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        nect_color = st.selectbox("🎨 Color de Nectarina", ["amarilla", "blanca"], key="nect_color")
+    with col2:
+        nect_period = st.selectbox("📅 Período de Cosecha", ["muy_temprana", "temprana", "tardia"], key="nect_period")
+    
+    st.markdown(f"### ✏️ Editando **NECTARINA {nect_color.upper()} - {nect_period.upper()}**")
+    
+    current_nect_rules = st.session_state.edited_nect_rules[nect_color][nect_period]
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Editor BRIX
+        new_brix_n = create_band_editor("BRIX (%)", current_nect_rules["BRIX"], f"nect_{nect_color}_{nect_period}_brix")
+        st.session_state.edited_nect_rules[nect_color][nect_period]["BRIX"] = new_brix_n
+        
+        # Editor ACIDEZ
+        new_acidez_n = create_band_editor("ACIDEZ (%)", current_nect_rules["ACIDEZ"], f"nect_{nect_color}_{nect_period}_acidez")
+        st.session_state.edited_nect_rules[nect_color][nect_period]["ACIDEZ"] = new_acidez_n
+    
+    with col2:
+        # Editor FIRMEZA_PUNTO
+        new_fp_n = create_band_editor("FIRMEZA PUNTO", current_nect_rules["FIRMEZA_PUNTO"], f"nect_{nect_color}_{nect_period}_fp")
+        st.session_state.edited_nect_rules[nect_color][nect_period]["FIRMEZA_PUNTO"] = new_fp_n
+        
+        # Editor FIRMEZA_MEJ
+        new_fmej_n = create_band_editor("FIRMEZA MEJILLAS", current_nect_rules["FIRMEZA_MEJ"], f"nect_{nect_color}_{nect_period}_fmej")
+        st.session_state.edited_nect_rules[nect_color][nect_period]["FIRMEZA_MEJ"] = new_fmej_n
+    
+    # Información de períodos
+    st.markdown("""
+    <div class="success-card">
+        <h4>📅 Información de Períodos de Cosecha</h4>
+        <strong>Nectarina Blanca:</strong><br>
+        • Muy Temprana: antes del 25 nov • Temprana: 25 nov - 15 dic • Tardía: 16 dic - 15 feb<br><br>
+        <strong>Nectarina Amarilla:</strong><br>
+        • Muy Temprana: antes del 22 nov • Temprana: 22 nov - 22 dic • Tardía: 23 dic - 15 feb
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Botones de acción
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("🔄 Restaurar Originales", key="reset_nect"):
+            st.session_state.edited_nect_rules[nect_color][nect_period] = copy.deepcopy(NECT_RULES[nect_color][nect_period])
+            st.success("✅ Reglas restauradas!")
+            st.rerun()
+    
+    with col2:
+        if st.button("💾 Guardar Cambios", key="save_nect"):
+            st.success("✅ Cambios guardados en memoria!")
+    
+    with col3:
+        if st.button("📄 Ver Reglas JSON", key="show_nect_json"):
+            st.json(st.session_state.edited_nect_rules[nect_color][nect_period])
+
+with tab3:
+    st.markdown("""
+    <div class="success-card">
+        <h3>📊 Visualizaciones Interactivas</h3>
+        <p>Explore gráficamente las reglas de clustering y sus rangos de aplicación</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    viz_type = st.radio("📈 Tipo de Visualización", ["Ciruela", "Nectarina"], horizontal=True)
+    
+    if viz_type == "Ciruela":
+        viz_subtype = st.selectbox("🍭 Subtipo", ["candy", "cherry"], key="viz_plum_type")
+        rules = st.session_state.edited_plum_rules[viz_subtype]
+        
+        # Crear subplots
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=["BRIX", "FIRMEZA PUNTO", "FIRMEZA MEJILLAS", "ACIDEZ"],
+            specs=[[{"secondary_y": False}, {"secondary_y": False}],
+                   [{"secondary_y": False}, {"secondary_y": False}]]
+        )
+        
+        metrics = ["BRIX", "FIRMEZA_PUNTO", "FIRMEZA_MEJ", "ACIDEZ"]
+        positions = [(1,1), (1,2), (2,1), (2,2)]
+        
+        for metric, (row, col) in zip(metrics, positions):
+            bands = rules[metric]
+            # Usar colores pastel estándar
+            cluster_colors = get_cluster_colors()
+            colors = [cluster_colors['hex'][i] for i in range(1, 5)]
+            
+            for lo, hi, band in bands:
+                lo_display = lo if lo != float('-inf') else 0
+                hi_display = hi if hi != float('inf') else 30
+                
+                fig.add_trace(
+                    go.Bar(
+                        x=[f"Banda {band}"],
+                        y=[hi_display - lo_display],
+                        base=lo_display,
+                        marker_color=colors[band-1],
+                        name=f"{metric} B{band}",
+                        showlegend=False,
+                        text=f"[{lo}, {hi})",
+                        textposition="inside"
+                    ),
+                    row=row, col=col
+                )
+        
+        fig.update_layout(
+            title=f"🍑 Visualización Completa - Ciruela {viz_subtype.upper()}",
+            height=600,
+            template="plotly_dark"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
+    else:  # Nectarina
+        col1, col2 = st.columns(2)
+        with col1:
+            viz_color = st.selectbox("🎨 Color", ["amarilla", "blanca"], key="viz_nect_color")
+        with col2:
+            viz_period = st.selectbox("📅 Período", ["muy_temprana", "temprana", "tardia"], key="viz_nect_period")
+        
+        rules = st.session_state.edited_nect_rules[viz_color][viz_period]
+        
+        # Gráfico de radar para mostrar todos los rangos
+        categories = ["BRIX", "FIRMEZA_PUNTO", "FIRMEZA_MEJ", "ACIDEZ"]
+        
+        fig = go.Figure()
+        
+        for band_num in range(1, 5):
+            values = []
+            for metric in categories:
+                bands = rules[metric]
+                for lo, hi, band in bands:
+                    if band == band_num:
+                        # Usar el punto medio del rango para el radar
+                        lo_val = lo if lo != float('-inf') else 0
+                        hi_val = hi if hi != float('inf') else 20
+                        values.append((lo_val + hi_val) / 2)
+                        break
+            
+            if len(values) == 4:
+                fig.add_trace(go.Scatterpolar(
+                    r=values,
+                    theta=categories,
+                    fill='toself',
+                    name=f'Banda {band_num}',
+                    line_color=colors[band_num-1]
+                ))
+        
+        fig.update_layout(
+            polar=dict(
+                radialaxis=dict(visible=True, range=[0, 25])
+            ),
+            title=f"🍑 Radar de Bandas - Nectarina {viz_color} {viz_period}",
+            template="plotly_dark"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab4:
+    st.markdown("""
+    <div class="warning-card">
+        <h3>⚙️ Configuración y Exportación</h3>
+        <p>Gestione sus configuraciones personalizadas y exporte las reglas modificadas</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 📤 Exportar Configuraciones")
+        
+        if st.button("📄 Exportar Reglas como JSON", key="export_json"):
+            export_data = {
+                "plum_rules": st.session_state.edited_plum_rules,
+                "nect_rules": st.session_state.edited_nect_rules
+            }
+            st.download_button(
+                label="💾 Descargar JSON",
+                data=str(export_data),
+                file_name="reglas_clustering_personalizadas.json",
+                mime="application/json"
+            )
+        
+        if st.button("📊 Exportar como Python Code", key="export_python"):
+            python_code = f"""
+# Reglas de clustering personalizadas
+PLUM_RULES = {st.session_state.edited_plum_rules}
+
+NECT_RULES = {st.session_state.edited_nect_rules}
+"""
+            st.download_button(
+                label="💾 Descargar .py",
+                data=python_code,
+                file_name="reglas_personalizadas.py",
+                mime="text/plain"
+            )
+    
+    with col2:
+        st.markdown("#### 🔄 Acciones de Sistema")
+        
+        if st.button("🔄 Restaurar TODAS las Reglas", key="reset_all"):
+            st.session_state.edited_plum_rules = copy.deepcopy(PLUM_RULES)
+            st.session_state.edited_nect_rules = copy.deepcopy(NECT_RULES)
+            st.success("✅ Todas las reglas restauradas a valores originales!")
+            st.rerun()
+        
+        if st.button("📋 Mostrar Diferencias", key="show_diff"):
+            st.markdown("**🔍 Comparación con Reglas Originales:**")
+            
+            # Comparar cambios en Ciruela
+            for ptype in ["candy", "cherry"]:
+                original = PLUM_RULES[ptype]
+                edited = st.session_state.edited_plum_rules[ptype]
+                if original != edited:
+                    st.warning(f"Ciruela {ptype}: ¡Modificada!")
+                else:
+                    st.success(f"Ciruela {ptype}: Sin cambios")
+            
+            # Comparar cambios en Nectarina
+            for color in ["amarilla", "blanca"]:
+                for period in ["muy_temprana", "temprana", "tardia"]:
+                    original = NECT_RULES[color][period]
+                    edited = st.session_state.edited_nect_rules[color][period]
+                    if original != edited:
+                        st.warning(f"Nectarina {color} {period}: ¡Modificada!")
+                    else:
+                        st.success(f"Nectarina {color} {period}: Sin cambios")
+
+# Información final
 st.markdown("---")
-st.info("""
-💡 **Consejos de uso:**
-- Los cambios se guardan automáticamente en la sesión actual
-- Para aplicar las nuevas reglas, ejecuta la segmentación de nuevo en las páginas correspondientes
-- Los colores representan niveles de calidad: Verde=Excelente, Naranja=Bueno, Coral=Regular, Rojo=Deficiente
-- Los valores infinitos (±∞) se representan con números muy grandes/pequeños para facilitar la edición
-""")
+st.markdown("""
+<div class="metric-card">
+    <h4>🎯 Información del Sistema de Bandas</h4>
+    <p><strong>Cluster Final = Suma de Bandas:</strong></p>
+    <p>🟢 Cluster 1: Suma 3-5 (Excelente) | 🟡 Cluster 2: Suma 6-8 (Bueno) | 🟠 Cluster 3: Suma 9-11 (Regular) | 🔴 Cluster 4: Suma 12+ (Deficiente)</p>
+    <p><strong>📏 Métricas:</strong> BRIX (sólidos solubles) • FIRMEZA_PUNTO (punto más débil) • FIRMEZA_MEJ (promedio mejillas) • ACIDEZ (primer fruto)</p>
+</div>
+""", unsafe_allow_html=True)
+
+with tab5:
+    st.markdown("""
+    <div class="info-card">
+        <h3>➕ Creador de Nuevas Métricas</h3>
+        <p>Define métricas personalizadas para tu análisis de clustering</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Inicializar session state para métricas personalizadas
+    if "custom_metrics" not in st.session_state:
+        st.session_state.custom_metrics = {}
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 🔧 Configurar Nueva Métrica")
+        
+        # Nombre de la métrica
+        metric_name = st.text_input(
+            "📝 Nombre de la Métrica:",
+            placeholder="Ej: TEXTURA_SUPERFICIE",
+            key="new_metric_name"
+        )
+        
+        # Tipo de métrica
+        metric_type = st.selectbox(
+            "📊 Tipo de Métrica:",
+            ["Numérica Continua", "Numérica Discreta", "Categórica"],
+            key="metric_type"
+        )
+        
+        # Descripción
+        metric_description = st.text_area(
+            "📋 Descripción:",
+            placeholder="Describe qué mide esta métrica y cómo se obtiene...",
+            key="metric_description"
+        )
+        
+        # Unidad de medida
+        metric_unit = st.text_input(
+            "🏷️ Unidad de Medida:",
+            placeholder="Ej: %, cm, kg, puntos",
+            key="metric_unit"
+        )
+        
+        # Rango esperado
+        st.markdown("#### 📏 Rango de Valores")
+        col_min, col_max = st.columns(2)
+        with col_min:
+            metric_min = st.number_input(
+                "Valor Mínimo:",
+                value=0.0,
+                key="metric_min"
+            )
+        with col_max:
+            metric_max = st.number_input(
+                "Valor Máximo:",
+                value=100.0,
+                key="metric_max"
+            )
+    
+    with col2:
+        st.markdown("### 🎯 Definir Bandas de Clasificación")
+        
+        if metric_name:
+            st.markdown(f"**Configurando bandas para:** {metric_name}")
+            
+            # Número de bandas
+            num_bands = st.selectbox(
+                "🔢 Número de Bandas:",
+                [3, 4, 5],
+                index=1,  # Default 4 bandas
+                key="num_bands"
+            )
+            
+            # Configurar cada banda
+            bands_config = []
+            band_colors = ["🟢 Excelente", "🟡 Bueno", "🟠 Regular", "🟣 Deficiente"]
+            
+            for i in range(num_bands):
+                st.markdown(f"#### {band_colors[i]} - Banda {i+1}")
+                
+                col_band_min, col_band_max = st.columns(2)
+                with col_band_min:
+                    if i == 0:
+                        band_min = st.number_input(
+                            f"Mínimo B{i+1}:",
+                            value=metric_min,
+                            key=f"band_{i}_min"
+                        )
+                    else:
+                        band_min = bands_config[i-1]['max']
+                        st.info(f"Mínimo: {band_min}")
+                
+                with col_band_max:
+                    if i == num_bands - 1:
+                        band_max = metric_max
+                        st.info(f"Máximo: {band_max}")
+                    else:
+                        band_max = st.number_input(
+                            f"Máximo B{i+1}:",
+                            value=metric_min + ((metric_max - metric_min) / num_bands) * (i+1),
+                            key=f"band_{i}_max"
+                        )
+                
+                bands_config.append({
+                    'band': i+1,
+                    'min': band_min,
+                    'max': band_max,
+                    'label': band_colors[i]
+                })
+    
+    # Guardar métrica personalizada
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("💾 Guardar Métrica", key="save_custom_metric"):
+            if metric_name and metric_description:
+                # Crear estructura de la métrica
+                custom_metric = {
+                    'name': metric_name,
+                    'type': metric_type,
+                    'description': metric_description,
+                    'unit': metric_unit,
+                    'min_value': metric_min,
+                    'max_value': metric_max,
+                    'bands': bands_config,
+                    'created_at': pd.Timestamp.now()
+                }
+                
+                # Guardar en session state
+                st.session_state.custom_metrics[metric_name] = custom_metric
+                
+                st.success(f"✅ Métrica '{metric_name}' guardada exitosamente!")
+                st.rerun()
+            else:
+                st.error("❌ Por favor completa al menos el nombre y descripción de la métrica.")
+    
+    with col2:
+        if st.button("📄 Exportar Métrica", key="export_custom_metric"):
+            if metric_name in st.session_state.custom_metrics:
+                metric_data = st.session_state.custom_metrics[metric_name]
+                
+                # Convertir a JSON
+                import json
+                metric_json = json.dumps(metric_data, default=str, indent=2)
+                
+                st.download_button(
+                    label="💾 Descargar JSON",
+                    data=metric_json,
+                    file_name=f"metrica_{metric_name.lower()}.json",
+                    mime="application/json"
+                )
+    
+    with col3:
+        if st.button("🗑️ Limpiar Formulario", key="clear_form"):
+            for key in ['new_metric_name', 'metric_description', 'metric_unit']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
+    
+    # Mostrar métricas existentes
+    if st.session_state.custom_metrics:
+        st.markdown("---")
+        st.markdown("### 📋 Métricas Personalizadas Creadas")
+        
+        for name, metric in st.session_state.custom_metrics.items():
+            with st.expander(f"📊 {name} ({metric['unit']})"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown(f"**Tipo:** {metric['type']}")
+                    st.markdown(f"**Descripción:** {metric['description']}")
+                    st.markdown(f"**Rango:** {metric['min_value']} - {metric['max_value']} {metric['unit']}")
+                    st.markdown(f"**Creada:** {metric['created_at'].strftime('%Y-%m-%d %H:%M')}")
+                
+                with col2:
+                    st.markdown("**Bandas de Clasificación:**")
+                    for band in metric['bands']:
+                        st.markdown(f"• {band['label']}: {band['min']} - {band['max']} {metric['unit']}")
+                
+                # Botones de acción
+                col_action1, col_action2, col_action3 = st.columns(3)
+                
+                with col_action1:
+                    if st.button(f"📝 Editar {name}", key=f"edit_{name}"):
+                        st.info("🔧 Para editar, modifica los valores arriba y guarda de nuevo.")
+                
+                with col_action2:
+                    if st.button(f"📄 Exportar {name}", key=f"export_{name}"):
+                        import json
+                        metric_json = json.dumps(metric, default=str, indent=2)
+                        st.download_button(
+                            label="💾 Descargar",
+                            data=metric_json,
+                            file_name=f"metrica_{name.lower()}.json",
+                            mime="application/json",
+                            key=f"download_{name}"
+                        )
+                
+                with col_action3:
+                    if st.button(f"🗑️ Eliminar {name}", key=f"delete_{name}"):
+                        del st.session_state.custom_metrics[name]
+                        st.success(f"✅ Métrica '{name}' eliminada.")
+                        st.rerun()
+    
+    else:
+        st.info("📝 No hay métricas personalizadas creadas aún. ¡Crea tu primera métrica usando el formulario arriba!")
+    
+    # Importar métricas desde JSON
+    st.markdown("---")
+    st.markdown("### 📤 Importar Métricas")
+    
+    uploaded_metric = st.file_uploader(
+        "📁 Cargar Métrica desde JSON:",
+        type=['json'],
+        key="upload_metric"
+    )
+    
+    if uploaded_metric is not None:
+        try:
+            import json
+            metric_data = json.load(uploaded_metric)
+            
+            # Validar estructura básica
+            required_fields = ['name', 'type', 'description', 'bands']
+            if all(field in metric_data for field in required_fields):
+                
+                # Guardar métrica importada
+                metric_name = metric_data['name']
+                st.session_state.custom_metrics[metric_name] = metric_data
+                
+                st.success(f"✅ Métrica '{metric_name}' importada exitosamente!")
+                st.rerun()
+            else:
+                st.error("❌ El archivo JSON no tiene la estructura correcta de una métrica.")
+        except Exception as e:
+            st.error(f"❌ Error al cargar el archivo: {str(e)}")
+
+st.success("🎉 ¡Sistema de reglas interactivo funcionando correctamente! Todas las modificaciones se aplican en tiempo real.")

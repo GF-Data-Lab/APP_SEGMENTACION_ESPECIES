@@ -4,93 +4,53 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from utils import show_logo
-
-# Configuración de página
-st.set_page_config(
-    page_title="📈 Evolución de Variedad", 
-    page_icon="📈", 
-    layout="wide"
+from itertools import combinations
+from common_styles import configure_page, get_cluster_colors, get_cluster_style_function, get_plotly_color_map, get_plotly_color_sequence, generarMenu
+from data_columns import (
+    COL_ESPECIE,
+    COL_VARIEDAD,
+    COL_FRUTO,
+    COL_BRIX as BRIX_COLUMN,
+    COL_ACIDEZ as ACIDEZ_COLUMN,
+    COL_FECHA_EVALUACION,
+    COL_CAMPO,
+    COL_PORTAINJERTO,
 )
 
-# Estilos CSS
+# Configuración de página con estilos unificados
+configure_page("📈 Evolución de Variedad", "📈")
+
+# Estilos adicionales específicos para esta página
 st.markdown("""
     <style>
-      [data-testid="stSidebar"] div.stButton > button {
-        background-color: #D32F2F !important;
-        color: white !important;
-        border: none !important;
-      }
-      [data-testid="stSidebar"] div.stButton > button:hover {
-        background-color: #B71C1C !important;
-      }
-      
-      .metric-evolution-box {
-        background-color: #f8f9fa;
-        padding: 20px;
-        border-radius: 12px;
-        margin: 15px 0;
-        border-left: 5px solid #2196f3;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-      }
-      
-      .season-comparison-box {
-        background-color: #e8f5e8;
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-        border-left: 4px solid #4caf50;
-      }
-      
       .improvement-box {
-        background-color: #e8f5e8;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
         padding: 15px;
         border-radius: 10px;
+        color: white;
         margin: 10px 0;
-        border-left: 4px solid #4caf50;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
       }
       
       .degradation-box {
-        background-color: #ffebee;
+        background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
         padding: 15px;
         border-radius: 10px;
+        color: white;
         margin: 10px 0;
-        border-left: 4px solid #f44336;
+        box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
       }
       
       .stable-box {
-        background-color: #fff3e0;
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
         padding: 15px;
         border-radius: 10px;
+        color: white;
         margin: 10px 0;
-        border-left: 4px solid #ff9800;
+        box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
       }
     </style>
 """, unsafe_allow_html=True)
-
-def generarMenu():
-    with st.sidebar:
-        show_logo()
-        if st.button('Página de Inicio 🏚️'):
-            st.switch_page('app.py')
-        if st.button('Carga de archivos 📁'):
-            st.switch_page('pages/carga_datos.py')
-        if st.button('Segmentación Ciruela 🍑'):
-            st.switch_page('pages/segmentacion_ciruela.py')
-        if st.button('Segmentación Nectarina 🍑'):
-            st.switch_page('pages/segmentacion_nectarina.py')
-        if st.button('Modelo de Clasificación'):
-            st.switch_page('pages/Cluster_especies.py')
-        if st.button('Análisis exploratorio'):
-            st.switch_page('pages/analisis.py')
-        if st.button('Métricas y Bandas 📊'):
-            st.switch_page('pages/metricas_bandas.py')
-        if st.button('Detección Outliers 🎯'):
-            st.switch_page('pages/outliers.py')
-        if st.button('Verificar Cálculos 🔍'):
-            st.switch_page('pages/verificar_calculos.py')
-        if st.button('Evolución Variedad 📈'):
-            st.switch_page('pages/evolucion_variedad.py')
 
 generarMenu()
 
@@ -134,13 +94,13 @@ if agg_data is None or raw_data is None:
     st.stop()
 
 # Columnas importantes
-ESPECIE_COLUMN = "Especie"
-VAR_COLUMN = "Variedad"
-FRUTO_COLUMN = "N° Muestra"
-COL_BRIX = "Sólidos Solubles (%)"
-COL_ACIDEZ = "Acidez (%)"
+ESPECIE_COLUMN = COL_ESPECIE
+VAR_COLUMN = COL_VARIEDAD
+FRUTO_COLUMN = COL_FRUTO
+COL_BRIX = BRIX_COLUMN
+COL_ACIDEZ = ACIDEZ_COLUMN
 LOCALIDAD_COLUMN = "Localidad"
-CAMPO_COLUMN = "Campo"
+CAMPO_COLUMN = COL_CAMPO
 
 # Obtener lista de variedades únicas y limpiar espacios
 variedades_raw = agg_data[VAR_COLUMN].unique() if VAR_COLUMN in agg_data.columns else []
@@ -200,6 +160,218 @@ if not variedades_seleccionadas:
 variedades_originales = [variedades_mapping[v] for v in variedades_seleccionadas]
 datos_variedades = raw_data[raw_data[VAR_COLUMN].isin(variedades_originales)]
 agg_variedades = agg_data[agg_data[VAR_COLUMN].isin(variedades_originales)]
+variedades_inverse_mapping = {v: k for k, v in variedades_mapping.items()}
+season_col = 'temporada' if 'temporada' in agg_variedades.columns else 'harvest_period'
+fecha_col = COL_FECHA_EVALUACION if COL_FECHA_EVALUACION in agg_variedades.columns else None
+
+match_columns = [ESPECIE_COLUMN, VAR_COLUMN, season_col, COL_CAMPO, COL_PORTAINJERTO]
+if fecha_col:
+    match_columns.append(fecha_col)
+
+timeline_rows = []
+if not agg_variedades.empty:
+    for _, grupo_row in agg_variedades.iterrows():
+        var_original = grupo_row.get(VAR_COLUMN)
+        var_clean_lookup = variedades_inverse_mapping.get(var_original, str(var_original).strip().replace(' ', ''))
+        temporada_val = grupo_row.get(season_col)
+        fecha_val = grupo_row.get(fecha_col) if fecha_col else np.nan
+
+        mask = pd.Series(True, index=datos_variedades.index)
+        for col in match_columns:
+            if col in datos_variedades.columns and col in grupo_row.index:
+                valor = grupo_row.get(col)
+                if pd.isna(valor):
+                    mask &= datos_variedades[col].isna()
+                else:
+                    mask &= datos_variedades[col] == valor
+
+        datos_grupo = datos_variedades[mask]
+        metric_cols = [col for col in [COL_BRIX, COL_ACIDEZ, 'Firmeza punto valor'] if col in datos_grupo.columns]
+        if len(metric_cols) < 3:
+            continue
+
+        datos_grupo_validos = datos_grupo.dropna(subset=metric_cols)
+        if datos_grupo_validos.empty:
+            continue
+
+
+        muestras = len(datos_grupo_validos)
+        frutos = datos_grupo_validos[FRUTO_COLUMN].nunique() if FRUTO_COLUMN in datos_grupo_validos.columns else 0
+        localidades_count = datos_grupo_validos[LOCALIDAD_COLUMN].nunique() if LOCALIDAD_COLUMN in datos_grupo_validos.columns else 0
+        campos_count = datos_grupo_validos[CAMPO_COLUMN].nunique() if CAMPO_COLUMN in datos_grupo_validos.columns else 0
+
+        band_values = [grupo_row.get(col) for col in ['banda_brix', 'banda_firmeza', 'banda_firmeza_punto', 'banda_acidez'] if col in grupo_row.index]
+        if band_values and any(pd.isna(val) for val in band_values):
+            continue
+
+        timeline_rows.append({
+            'Variedad': var_clean_lookup,
+            'Variedad_Nombre': var_original,
+            'Temporada': temporada_val,
+            'Fecha': fecha_val,
+            'GrupoID': grupo_row.get('grupo_id'),
+            'GrupoKey': grupo_row.get('grupo_key'),
+            'GrupoKeyDetalle': grupo_row.get('grupo_key_detalle'),
+            'Cluster': grupo_row.get('cluster_grp'),
+            'Suma_Bandas': grupo_row.get('suma_bandas'),
+            'Banda_BRIX': grupo_row.get('banda_brix'),
+            'Banda_Firmeza_Punto': grupo_row.get('banda_firmeza_punto'),
+            'Banda_Mejillas': grupo_row.get('banda_mejillas'),
+            'Banda_Acidez': grupo_row.get('banda_acidez'),
+            'Muestras': muestras,
+            'Frutos': frutos,
+            'Localidades': localidades_count,
+            'Campos': campos_count,
+            'Campo': grupo_row.get('Campo'),
+            'Portainjerto': grupo_row.get(COL_PORTAINJERTO),
+            'BRIX_Promedio': grupo_row.get('brix_promedio'),
+            'Acidez_Promedio': grupo_row.get('acidez_primer_fruto'),
+            'Firmeza_Punto_Debil': grupo_row.get('firmeza_punto_debil'),
+            'Mejillas_Promedio': grupo_row.get('mejillas_promedio'),
+        })
+
+timeline_df = pd.DataFrame(timeline_rows)
+
+brix_combo_data = {}
+brix_combo_export_frames = []
+combo_label_columns = {}
+
+if not timeline_df.empty:
+    if 'Fecha' in timeline_df.columns:
+        timeline_df['Fecha_dt'] = pd.to_datetime(timeline_df['Fecha'], errors='coerce')
+    sort_columns = ['Variedad', 'Temporada']
+    if 'Fecha_dt' in timeline_df.columns:
+        sort_columns.append('Fecha_dt')
+    timeline_df = timeline_df.sort_values(sort_columns)
+
+combo_candidates = [
+    (ESPECIE_COLUMN, 'Especie'),
+    (VAR_COLUMN, 'Variedad'),
+    (CAMPO_COLUMN, 'Campo'),
+    (LOCALIDAD_COLUMN, 'Localidad'),
+    (COL_PORTAINJERTO, 'Portainjerto')
+]
+if 'Color de pulpa' in datos_variedades.columns:
+    combo_candidates.append(('Color de pulpa', 'Color de pulpa'))
+
+available_combo_cols = [col for col, _ in combo_candidates if col in datos_variedades.columns]
+combo_label_map = {col: label for col, label in combo_candidates if col in datos_variedades.columns}
+
+if COL_BRIX in datos_variedades.columns and available_combo_cols:
+    for r in range(1, len(available_combo_cols) + 1):
+        for combo in combinations(available_combo_cols, r):
+            grouping_cols = list(combo)
+            if season_col and season_col not in grouping_cols:
+                grouping_cols.append(season_col)
+            if fecha_col and fecha_col not in grouping_cols:
+                grouping_cols.append(fecha_col)
+
+            grouped = (
+                datos_variedades
+                .groupby(grouping_cols, dropna=False)[COL_BRIX]
+                .agg(['mean', 'count', 'min', 'max', 'std'])
+                .reset_index()
+            )
+
+            if grouped.empty:
+                continue
+
+            grouped = grouped.rename(columns={
+                'mean': 'BRIX_Promedio',
+                'count': 'Registros',
+                'min': 'BRIX_Min',
+                'max': 'BRIX_Max',
+                'std': 'BRIX_Std'
+            })
+
+            combo_label = ' + '.join(combo_label_map[c] for c in combo)
+            grouped['Llave'] = combo_label
+
+            if season_col and season_col in grouped.columns:
+                grouped = grouped.rename(columns={season_col: 'Temporada'})
+            if fecha_col and fecha_col in grouped.columns:
+                grouped = grouped.rename(columns={fecha_col: 'Fecha'})
+
+            brix_combo_data[combo_label] = grouped
+            combo_label_columns[combo_label] = list(combo)
+            brix_combo_export_frames.append(grouped.assign(Llave=combo_label))
+else:
+    brix_combo_data = {}
+    brix_combo_export_frames = []
+    combo_label_columns = {}
+
+brix_combo_export_df = pd.concat(brix_combo_export_frames, ignore_index=True) if brix_combo_export_frames else pd.DataFrame()
+
+
+if brix_combo_data:
+    st.markdown("### ?? Promedios de BRIX por combinatoria de llaves")
+    combo_options = sorted(brix_combo_data.keys())
+    selected_combo = st.selectbox(
+        "Selecciona la combinaci?n de llaves:",
+        options=combo_options,
+        index=0,
+        key="combo_brix_llave"
+    )
+
+    selected_df = brix_combo_data[selected_combo].copy()
+    base_key_cols = combo_label_columns.get(selected_combo, [])
+    season_column_name = 'Temporada' if 'Temporada' in selected_df.columns else None
+    fecha_column_name = 'Fecha' if 'Fecha' in selected_df.columns else None
+
+    group_key_cols = [col for col in base_key_cols if col in selected_df.columns]
+    if not group_key_cols:
+        group_key_cols = ['Llave'] if 'Llave' in selected_df.columns else []
+
+    display_columns = [col for col in [
+        *group_key_cols,
+        season_column_name,
+        fecha_column_name,
+        'BRIX_Promedio',
+        'BRIX_Min',
+        'BRIX_Max',
+        'BRIX_Std',
+        'Registros'
+    ] if col and col in selected_df.columns]
+
+    if group_key_cols:
+        etiqueta_cols = selected_df[group_key_cols].fillna('NA').astype(str)
+        selected_df['Grupo Etiqueta'] = etiqueta_cols.apply(lambda row: ' | '.join(row.values), axis=1)
+    else:
+        selected_df['Grupo Etiqueta'] = selected_combo
+
+    st.dataframe(selected_df[display_columns + ['Grupo Etiqueta']] if 'Grupo Etiqueta' in selected_df.columns else selected_df[display_columns], use_container_width=True)
+
+    if season_column_name and 'BRIX_Promedio' in selected_df.columns:
+        fig_combo_temp = px.line(
+            selected_df.sort_values(season_column_name),
+            x=season_column_name,
+            y='BRIX_Promedio',
+            color='Grupo Etiqueta',
+            markers=True,
+            title=f'Evoluci?n de BRIX por temporada - {selected_combo}'
+        )
+        fig_combo_temp.update_xaxes(title_text='Temporada')
+        fig_combo_temp.update_yaxes(title_text='BRIX Promedio')
+        st.plotly_chart(fig_combo_temp, use_container_width=True)
+
+    if fecha_column_name and selected_df[fecha_column_name].notna().any():
+        combo_fecha_df = selected_df.copy()
+        combo_fecha_df['Fecha_dt'] = pd.to_datetime(combo_fecha_df[fecha_column_name], errors='coerce')
+        combo_fecha_df = combo_fecha_df.dropna(subset=['Fecha_dt'])
+        if not combo_fecha_df.empty:
+            fig_combo_fecha = px.line(
+                combo_fecha_df.sort_values('Fecha_dt'),
+                x='Fecha_dt',
+                y='BRIX_Promedio',
+                color='Grupo Etiqueta',
+                markers=True,
+                title=f'Variaci?n de BRIX por fecha - {selected_combo}'
+            )
+            fig_combo_fecha.update_xaxes(title_text='Fecha')
+            fig_combo_fecha.update_yaxes(title_text='BRIX Promedio')
+            st.plotly_chart(fig_combo_fecha, use_container_width=True)
+else:
+    st.info("No se pudieron calcular combinaciones de BRIX con las llaves disponibles.")
 
 st.markdown("---")
 if len(variedades_seleccionadas) == 1:
@@ -227,7 +399,7 @@ with col2:
 with col3:
     st.metric("Temporadas", len(temporadas))
 with col4:
-    años_únicos = datos_variedades['harvest_period'].str.extract('(\d{4})').dropna().nunique() if 'harvest_period' in datos_variedades.columns else 0
+    años_únicos = datos_variedades['harvest_period'].str.extract(r'(\d{4})').dropna().nunique() if 'harvest_period' in datos_variedades.columns else 0
     st.metric("Años de Datos", años_únicos)
 
 # Segunda fila con información de localidades y campos
@@ -269,6 +441,76 @@ with col4:
     clusters_unicos = agg_variedades['cluster_grp'].nunique() if 'cluster_grp' in agg_variedades.columns else 0
     st.metric("Clusters Únicos", clusters_unicos)
 
+# Seguimiento detallado de grupos por fecha
+if not timeline_df.empty:
+    st.markdown("### Seguimiento por grupo y fecha")
+    timeline_display = timeline_df.copy()
+    if 'Fecha_dt' in timeline_display.columns:
+        timeline_display['Fecha'] = timeline_display['Fecha_dt'].dt.date
+    if 'Variedad' in timeline_display.columns and 'Variedad_Nombre' in timeline_display.columns:
+        timeline_display = timeline_display.drop(columns=['Variedad'])
+    if 'Variedad_Nombre' in timeline_display.columns:
+        timeline_display = timeline_display.rename(columns={'Variedad_Nombre': 'Variedad'})
+    timeline_display = timeline_display.reset_index(drop=True)
+    timeline_display = timeline_display.loc[:, ~timeline_display.columns.duplicated()]
+    display_columns = [
+        col for col in [
+            'Variedad',
+            'Temporada',
+            'Fecha',
+            'GrupoID',
+            'Cluster',
+            'Suma_Bandas',
+            'Banda_BRIX',
+            'Banda_Firmeza_Punto',
+            'Banda_Mejillas',
+            'Banda_Acidez',
+            'Muestras',
+            'Frutos',
+            'Localidades',
+            'Campos',
+            'Campo',
+            'Portainjerto',
+        ] if col in timeline_display.columns
+    ]
+    color_cluster_func = get_cluster_style_function()
+    data_to_show = timeline_display[display_columns]
+    if 'Cluster' in data_to_show.columns:
+        st.dataframe(
+            data_to_show.style.map(color_cluster_func, subset=['Cluster']),
+            use_container_width=True,
+        )
+    else:
+        st.dataframe(data_to_show, use_container_width=True)
+
+    cluster_summary = timeline_df.groupby(['Variedad_Nombre', 'Cluster'], dropna=False).agg(
+        Grupos=('GrupoID', 'nunique'),
+        Temporadas=('Temporada', 'nunique'),
+        Fechas=('Fecha', 'nunique'),
+        Promedio_Bandas=('Suma_Bandas', 'mean'),
+    ).reset_index()
+    cluster_summary = cluster_summary.rename(columns={'Variedad_Nombre': 'Variedad'})
+    st.markdown("#### Resumen por cluster")
+    st.dataframe(cluster_summary.round(2), use_container_width=True)
+
+    if 'Fecha_dt' in timeline_df.columns and timeline_df['Fecha_dt'].notna().any():
+        timeline_chart_df = timeline_df.dropna(subset=['Fecha_dt']).copy()
+        timeline_chart_df['Variedad Label'] = timeline_chart_df['Variedad_Nombre'].astype(str)
+        fig_timeline = px.line(
+            timeline_chart_df,
+            x='Fecha_dt',
+            y='Cluster',
+            color='Variedad Label',
+            markers=True,
+            hover_data=['Temporada', 'GrupoID', 'GrupoKey', 'Campo', 'Portainjerto'],
+            title='Evoluci?n de clusters por fecha',
+        )
+        fig_timeline.update_yaxes(dtick=1, title_text='Cluster')
+        fig_timeline.update_xaxes(title_text='Fecha')
+        st.plotly_chart(fig_timeline, use_container_width=True)
+else:
+    st.info("No se encontraron grupos agregados para las variedades seleccionadas.")
+
 # Tabla resumen por variedad
 if len(variedades_seleccionadas) > 1:
     st.markdown("### 📋 **Resumen por Variedad**")
@@ -299,16 +541,15 @@ st.markdown("---")
 st.markdown("### 📈 Evolución de Métricas por Temporada")
 
 if len(temporadas) > 1:
-    # Colores para clusters
-    cluster_colors = {
-        1: '#a8e6cf',  # verde claro - Excelente
-        2: '#ffd3b6',  # naranja claro - Bueno
-        3: '#ffaaa5',  # coral - Regular
-        4: '#ff8b94',  # rojo rosado - Deficiente
-    }
+    # Usar colores unificados del sistema
+    # Usar paleta de colores pastel estándar
+    cluster_color_map = get_plotly_color_map()
+    colors = get_cluster_colors()
+    cluster_colors = colors['plotly']  # Usar colores para Plotly
     
     # Preparar datos para gráficos - ahora para múltiples variedades
     evolution_data = []
+    incomplete_evolution = []
     for var_clean in variedades_seleccionadas:
         var_original = variedades_mapping[var_clean]
         datos_var = datos_variedades[datos_variedades[VAR_COLUMN] == var_original]
@@ -317,35 +558,60 @@ if len(temporadas) > 1:
         for temporada in temporadas:
             temp_data = datos_var[datos_var['harvest_period'] == temporada] if 'harvest_period' in datos_var.columns else datos_var
             agg_temp = agg_var[agg_var['harvest_period'] == temporada] if 'harvest_period' in agg_var.columns else agg_var
+            metric_columns = [COL_BRIX, COL_ACIDEZ, 'Firmeza punto valor']
+            if not all(col in temp_data.columns for col in metric_columns):
+                incomplete_evolution.append((var_clean, temporada, 'Faltan columnas de metricas'))
+                continue
+            temp_metrics = temp_data.dropna(subset=metric_columns)
+            if temp_metrics.empty:
+                incomplete_evolution.append((var_clean, temporada, 'Registros sin metricas completas'))
+                continue
+
         
-        if not temp_data.empty:
+        if not temp_metrics.empty:
             # Contar localidades y campos por temporada
-            localidades_temp = temp_data[LOCALIDAD_COLUMN].nunique() if LOCALIDAD_COLUMN in temp_data.columns else 0
-            campos_temp = temp_data[CAMPO_COLUMN].nunique() if CAMPO_COLUMN in temp_data.columns else 0
+            localidades_temp = temp_metrics[LOCALIDAD_COLUMN].nunique() if LOCALIDAD_COLUMN in temp_metrics.columns else 0
+            campos_temp = temp_metrics[CAMPO_COLUMN].nunique() if CAMPO_COLUMN in temp_metrics.columns else 0
             
             row = {
                 'Variedad': var_clean,
+                'Variedad_Nombre': var_original,
                 'Temporada': temporada,
-                'Año': temporada.split('_')[-1] if '_' in temporada else temporada,
-                'Muestras': len(temp_data),
-                'Frutos': temp_data[FRUTO_COLUMN].nunique() if FRUTO_COLUMN in temp_data.columns else 0,
+                'A??o': temporada.split('_')[-1] if '_' in temporada else temporada,
+                'Muestras': len(temp_metrics),
+                'Frutos': temp_metrics[FRUTO_COLUMN].nunique() if FRUTO_COLUMN in temp_metrics.columns else 0,
                 'Localidades': localidades_temp,
                 'Campos': campos_temp,
-                'BRIX_Promedio': temp_data[COL_BRIX].mean() if COL_BRIX in temp_data.columns else np.nan,
-                'BRIX_Std': temp_data[COL_BRIX].std() if COL_BRIX in temp_data.columns else np.nan,
-                'BRIX_Min': temp_data[COL_BRIX].min() if COL_BRIX in temp_data.columns else np.nan,
-                'BRIX_Max': temp_data[COL_BRIX].max() if COL_BRIX in temp_data.columns else np.nan,
-                'Acidez_Promedio': temp_data[COL_ACIDEZ].mean() if COL_ACIDEZ in temp_data.columns else np.nan,
-                'Acidez_Std': temp_data[COL_ACIDEZ].std() if COL_ACIDEZ in temp_data.columns else np.nan,
-                'Firmeza_Promedio': temp_data['Firmeza punto valor'].mean() if 'Firmeza punto valor' in temp_data.columns else np.nan,
-                'Firmeza_Min': temp_data['Firmeza punto valor'].min() if 'Firmeza punto valor' in temp_data.columns else np.nan,
+                'BRIX_Promedio': temp_metrics[COL_BRIX].mean() if COL_BRIX in temp_metrics.columns else np.nan,
+                'BRIX_Std': temp_metrics[COL_BRIX].std() if COL_BRIX in temp_metrics.columns else np.nan,
+                'BRIX_Min': temp_metrics[COL_BRIX].min() if COL_BRIX in temp_metrics.columns else np.nan,
+                'BRIX_Max': temp_metrics[COL_BRIX].max() if COL_BRIX in temp_metrics.columns else np.nan,
+                'Acidez_Promedio': temp_metrics[COL_ACIDEZ].mean() if COL_ACIDEZ in temp_metrics.columns else np.nan,
+                'Acidez_Std': temp_metrics[COL_ACIDEZ].std() if COL_ACIDEZ in temp_metrics.columns else np.nan,
+                'Firmeza_Promedio': temp_metrics['Firmeza punto valor'].mean() if 'Firmeza punto valor' in temp_metrics.columns else np.nan,
+                'Firmeza_Min': temp_metrics['Firmeza punto valor'].min() if 'Firmeza punto valor' in temp_metrics.columns else np.nan,
                 'Cluster': agg_temp['cluster_grp'].iloc[0] if 'cluster_grp' in agg_temp.columns and not agg_temp.empty else np.nan,
                 'Banda_BRIX': agg_temp['banda_brix'].iloc[0] if 'banda_brix' in agg_temp.columns and not agg_temp.empty else np.nan,
-                'Banda_Firmeza': agg_temp['banda_firmeza'].iloc[0] if 'banda_firmeza' in agg_temp.columns and not agg_temp.empty else np.nan,
+                'Banda_Firmeza': (
+                    agg_temp['banda_firmeza_punto'].iloc[0]
+                    if 'banda_firmeza_punto' in agg_temp.columns and not agg_temp.empty
+                    else (agg_temp['banda_firmeza'].iloc[0] if 'banda_firmeza' in agg_temp.columns and not agg_temp.empty else np.nan)
+                ),
+                'Banda_Mejillas': agg_temp['banda_mejillas'].iloc[0] if 'banda_mejillas' in agg_temp.columns and not agg_temp.empty else np.nan,
+                'Banda_Acidez': agg_temp['banda_acidez'].iloc[0] if 'banda_acidez' in agg_temp.columns and not agg_temp.empty else np.nan,
                 'Suma_Bandas': agg_temp['suma_bandas'].iloc[0] if 'suma_bandas' in agg_temp.columns and not agg_temp.empty else np.nan,
+                'GrupoID': agg_temp['grupo_id'].iloc[0] if 'grupo_id' in agg_temp.columns and not agg_temp.empty else np.nan,
+                'GrupoKey': agg_temp['grupo_key'].iloc[0] if 'grupo_key' in agg_temp.columns and not agg_temp.empty else np.nan,
+                'GrupoKeyDetalle': agg_temp['grupo_key_detalle'].iloc[0] if 'grupo_key_detalle' in agg_temp.columns and not agg_temp.empty else np.nan,
+                'Fecha_Grupo': agg_temp[fecha_col].iloc[0] if fecha_col and fecha_col in agg_temp.columns and not agg_temp.empty else np.nan,
             }
             evolution_data.append(row)
     
+    if incomplete_evolution:
+        missing_df = pd.DataFrame(incomplete_evolution, columns=['Variedad', 'Temporada', 'Motivo']).drop_duplicates()
+        st.warning('Se omitieron combinaciones sin metricas completas. Revisa la tabla para validar los datos faltantes.')
+        st.dataframe(missing_df.sort_values(['Variedad', 'Temporada']), use_container_width=True)
+
     if evolution_data:
         df_evolution = pd.DataFrame(evolution_data).sort_values('Temporada')
         
@@ -358,7 +624,9 @@ if len(temporadas) > 1:
         )
         
         # Colores para cada variedad
-        colors_variedades = px.colors.qualitative.Set1[:len(variedades_seleccionadas)]
+        # Usar secuencia de colores pastel para variedades
+        base_colors = get_plotly_color_sequence()
+        colors_variedades = (base_colors * ((len(variedades_seleccionadas) // 4) + 1))[:len(variedades_seleccionadas)]
         
         # BRIX - una línea por variedad
         for i, variedad in enumerate(variedades_seleccionadas):
@@ -426,31 +694,24 @@ if len(temporadas) > 1:
         
         # Tabla de evolución
         st.markdown("#### 📋 Tabla de Evolución por Temporada y Variedad")
-        display_df = df_evolution[['Variedad', 'Temporada', 'Muestras', 'Frutos', 'Localidades', 'Campos',
-                                 'BRIX_Promedio', 'BRIX_Min', 'BRIX_Max', 'Acidez_Promedio', 
-                                 'Firmeza_Promedio', 'Banda_BRIX', 'Banda_Firmeza', 'Suma_Bandas', 'Cluster']].round(2)
-        
-        # Colorear la tabla por cluster y variedad
-        def color_cluster_table(row):
-            cluster = row['Cluster']
-            variedad = row['Variedad']
-            colors_row = ['']*len(row)
-            
-            # Color de fondo para el cluster
-            if not pd.isna(cluster):
-                cluster_color = cluster_colors.get(int(cluster), '')
-                if 'Cluster' in row.index:
-                    colors_row[list(row.index).index('Cluster')] = f'background-color: {cluster_color}'
-            
-            # Color de borde para la variedad
-            if 'Variedad' in row.index and variedad in variedades_seleccionadas:
-                var_idx = variedades_seleccionadas.index(variedad)
-                var_color = colors_variedades[var_idx] if var_idx < len(colors_variedades) else '#cccccc'
-                colors_row[list(row.index).index('Variedad')] = f'background-color: {var_color}; opacity: 0.3'
-            
-            return colors_row
-        
-        styled_df = display_df.style.apply(color_cluster_table, axis=1)
+        display_columns = [
+            'Variedad_Nombre', 'Variedad', 'Temporada', 'Fecha_Grupo', 'GrupoID', 'GrupoKey', 'GrupoKeyDetalle',
+            'Muestras', 'Frutos', 'Localidades', 'Campos',
+            'BRIX_Promedio', 'BRIX_Min', 'BRIX_Max', 'Acidez_Promedio',
+            'Firmeza_Promedio', 'Banda_BRIX', 'Banda_Firmeza', 'Banda_Mejillas', 'Banda_Acidez', 'Suma_Bandas', 'Cluster'
+        ]
+        display_columns = [col for col in display_columns if col in df_evolution.columns]
+        display_df = df_evolution[display_columns].round(2)
+        display_df = display_df.rename(columns={
+            'Variedad_Nombre': 'Variedad Nombre',
+            'Fecha_Grupo': 'Fecha Grupo'
+        })
+
+        # Usar colores unificados para colorear clusters
+        color_cluster_func = get_cluster_style_function()
+        styled_df = display_df.style.map(
+            color_cluster_func, subset=['Cluster'] if 'Cluster' in display_df.columns else []
+        )
         st.dataframe(styled_df, use_container_width=True)
         
         # Gráfico de comparación directa entre variedades (si hay múltiples)
@@ -567,9 +828,9 @@ if len(temporadas) > 1:
         # Tabla resumen por temporada-localidad-campo
         location_summary = []
         for temporada in temporadas:
-            temp_data = datos_variedad[datos_variedad['harvest_period'] == temporada]
-            for localidad in temp_data[LOCALIDAD_COLUMN].unique():
-                loc_data = temp_data[temp_data[LOCALIDAD_COLUMN] == localidad]
+            temp_metrics = datos_variedad[datos_variedad['harvest_period'] == temporada]
+            for localidad in temp_metrics[LOCALIDAD_COLUMN].unique():
+                loc_data = temp_metrics[temp_metrics[LOCALIDAD_COLUMN] == localidad]
                 for campo in loc_data[CAMPO_COLUMN].unique():
                     campo_data = loc_data[loc_data[CAMPO_COLUMN] == campo]
                     if not campo_data.empty:
@@ -796,13 +1057,13 @@ if len(temporadas) > 1:
         comparison_data = []
         for variedad in variedades_seleccionadas:
             var_original = variedades_mapping[variedad]
-            for temp_name, temp_data in [(temp1, datos_temp1), (temp2, datos_temp2)]:
-                var_temp_data = temp_data[temp_data[VAR_COLUMN] == var_original]
-                if not var_temp_data.empty:
+            for temp_name, temp_metrics in [(temp1, datos_temp1), (temp2, datos_temp2)]:
+                var_temp_metrics = temp_metrics[temp_metrics[VAR_COLUMN] == var_original]
+                if not var_temp_metrics.empty:
                     row = {
                         'Variedad': variedad,
                         'Temporada': temp_name,
-                        'Muestras': len(var_temp_data),
+                        'Muestras': len(var_temp_metrics),
                         'Frutos': var_temp_data[FRUTO_COLUMN].nunique() if FRUTO_COLUMN in var_temp_data.columns else 0,
                         'Localidades': var_temp_data[LOCALIDAD_COLUMN].nunique() if LOCALIDAD_COLUMN in var_temp_data.columns else 0,
                         'Campos': var_temp_data[CAMPO_COLUMN].nunique() if CAMPO_COLUMN in var_temp_data.columns else 0,
@@ -831,10 +1092,24 @@ if st.button("📥 Exportar análisis de evolución a Excel"):
     # Hoja 2: Datos agregados por variedad
     agg_variedades.to_excel(output, sheet_name='Datos_Agregados', index=False)
     
-    # Hoja 3: Datos crudos de las variedades
+    # Hoja 3: Detalle por grupo y fecha
+    if 'timeline_df' in locals() and not timeline_df.empty:
+        timeline_export = timeline_df.copy()
+        if 'Fecha_dt' in timeline_export.columns:
+            timeline_export['Fecha_dt'] = timeline_export['Fecha_dt'].astype(str)
+        timeline_export.to_excel(output, sheet_name='Detalle_Grupos', index=False)
+
+    # Hoja 4: Datos crudos de las variedades
     datos_variedades.to_excel(output, sheet_name='Datos_Crudos', index=False)
+    # Hoja 5: Brix combinatoria por llaves
+    if 'brix_combo_export_df' in locals() and not brix_combo_export_df.empty:
+        export_brix_combo = brix_combo_export_df.copy()
+        if 'Fecha' in export_brix_combo.columns:
+            export_brix_combo['Fecha'] = pd.to_datetime(export_brix_combo['Fecha'], errors='coerce').astype(str)
+        export_brix_combo.to_excel(output, sheet_name='Brix_Combinatoria', index=False)
+
     
-    # Hoja 4: Desglose por localidad y campo (si existe)
+    # Hoja 6: Desglose por localidad y campo (si existe)
     if 'df_locations' in locals():
         df_locations.to_excel(output, sheet_name='Localidad_Campo', index=False)
     

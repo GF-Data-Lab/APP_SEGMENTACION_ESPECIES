@@ -1,77 +1,17 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from utils import show_logo
-
-# Configuración de página
-st.set_page_config(
-    page_title="🔍 Verificación de Cálculos", 
-    page_icon="🔍", 
-    layout="wide"
+from common_styles import configure_page, generarMenu, get_cluster_colors
+from data_columns import (
+    COL_ESPECIE,
+    COL_VARIEDAD,
+    COL_FRUTO,
+    COL_BRIX as BRIX_COLUMN,
+    COL_ACIDEZ as ACIDEZ_COLUMN,
 )
 
-# Estilos CSS
-st.markdown("""
-    <style>
-      [data-testid="stSidebar"] div.stButton > button {
-        background-color: #D32F2F !important;
-        color: white !important;
-        border: none !important;
-      }
-      [data-testid="stSidebar"] div.stButton > button:hover {
-        background-color: #B71C1C !important;
-      }
-      
-      .calculation-box {
-        background-color: #f0f2f6;
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-        border-left: 4px solid #4CAF50;
-      }
-      
-      .error-box {
-        background-color: #ffebee;
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-        border-left: 4px solid #f44336;
-      }
-      
-      .info-box {
-        background-color: #e3f2fd;
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-        border-left: 4px solid #2196f3;
-      }
-    </style>
-""", unsafe_allow_html=True)
-
-def generarMenu():
-    with st.sidebar:
-        show_logo()
-        if st.button('Página de Inicio 🏚️'):
-            st.switch_page('app.py')
-        if st.button('Carga de archivos 📁'):
-            st.switch_page('pages/carga_datos.py')
-        if st.button('Segmentación Ciruela 🍑'):
-            st.switch_page('pages/segmentacion_ciruela.py')
-        if st.button('Segmentación Nectarina 🍑'):
-            st.switch_page('pages/segmentacion_nectarina.py')
-        if st.button('Modelo de Clasificación'):
-            st.switch_page('pages/Cluster_especies.py')
-        if st.button('Análisis exploratorio'):
-            st.switch_page('pages/analisis.py')
-        if st.button('Métricas y Bandas 📊'):
-            st.switch_page('pages/metricas_bandas.py')
-        if st.button('Detección Outliers 🎯'):
-            st.switch_page('pages/outliers.py')
-        if st.button('Verificar Cálculos 🔍'):
-            st.switch_page('pages/verificar_calculos.py')
-        if st.button('Evolución Variedad 📈'):
-            st.switch_page('pages/evolucion_variedad.py')
-
+# Configuración de página con estilos unificados
+configure_page("🔍 Verificación de Cálculos", "✅")
 generarMenu()
 
 # Título principal
@@ -112,11 +52,11 @@ if agg_data is None or raw_data is None:
     st.stop()
 
 # Columnas importantes
-ESPECIE_COLUMN = "Especie"
-VAR_COLUMN = "Variedad"
-FRUTO_COLUMN = "N° Muestra"
-COL_BRIX = "Sólidos Solubles (%)"
-COL_ACIDEZ = "Acidez (%)"
+ESPECIE_COLUMN = COL_ESPECIE
+VAR_COLUMN = COL_VARIEDAD
+FRUTO_COLUMN = COL_FRUTO
+COL_BRIX = BRIX_COLUMN
+COL_ACIDEZ = ACIDEZ_COLUMN
 
 # Obtener lista de variedades únicas
 variedades = agg_data[VAR_COLUMN].unique() if VAR_COLUMN in agg_data.columns else []
@@ -177,14 +117,19 @@ st.markdown('<div class="calculation-box">Se calcula el promedio de BRIX, Acidez
 
 if FRUTO_COLUMN in datos_variedad.columns:
     # Calcular promedios por fruto
+    agg_dict = {COL_BRIX: 'mean'}
+
+    # Agregar columnas solo si existen
+    if COL_ACIDEZ in datos_variedad.columns:
+        agg_dict[COL_ACIDEZ] = 'mean'
+
+    if 'Firmeza punto valor' in datos_variedad.columns:
+        agg_dict['Firmeza punto valor'] = ['mean', 'min']
+
     promedios_fruto = (
         datos_variedad
         .groupby([FRUTO_COLUMN, 'harvest_period'] if 'harvest_period' in datos_variedad.columns else [FRUTO_COLUMN])
-        .agg({
-            COL_BRIX: 'mean',
-            COL_ACIDEZ: 'mean' if COL_ACIDEZ in datos_variedad.columns else lambda x: np.nan,
-            'Firmeza punto valor': ['mean', 'min'] if 'Firmeza punto valor' in datos_variedad.columns else lambda x: np.nan
-        })
+        .agg(agg_dict)
         .round(2)
     )
     
@@ -238,89 +183,111 @@ st.markdown("---")
 st.markdown("### 🎖️ Paso 4: Asignación de bandas (1-4)")
 st.markdown('<div class="info-box">Se asignan bandas basadas en cuartiles donde 1=mejor, 4=peor.</div>', unsafe_allow_html=True)
 
-# Colores para bandas
-band_colors = {
-    1: '#a8e6cf',  # verde claro - Excelente
-    2: '#ffd3b6',  # naranja claro - Bueno  
-    3: '#ffaaa5',  # coral - Regular
-    4: '#ff8b94',  # rojo rosado - Deficiente
-}
+# Usar paleta de colores pastel estándar de la aplicación
+def get_band_colors():
+    """Obtiene los colores estándar para las bandas de calidad."""
+    colors = get_cluster_colors()
+    return colors['solid']  # Usar colores sólidos pastel estándar
+
+band_colors = get_band_colors()
+
+
+def _safe_positive_int(value):
+    if value is None or pd.isna(value):
+        return None
+    try:
+        as_int = int(value)
+    except (ValueError, TypeError):
+        return None
+    return as_int if as_int > 0 else None
+
+def _format_metric_value(value):
+    return f"{value:.2f}" if value is not None and not pd.isna(value) else "Sin dato"
+
+def _render_band_card(band_value, metric_value, extra_text=None):
+    band_int = _safe_positive_int(band_value)
+    if band_int is None:
+        st.markdown("<div style='background-color: #e0e0e0; padding: 10px; border-radius: 5px; text-align: center;'>Sin datos</div>", unsafe_allow_html=True)
+        return
+    colors = get_cluster_colors()
+    color = colors['solid'].get(band_int, '#F8F9FA')  # Usar color estándar o gris neutral
+    metric_text = _format_metric_value(metric_value)
+    extra_html = f"<br>{extra_text}" if extra_text else ""
+    st.markdown(
+        f"<div style='background-color: {color}; padding: 10px; border-radius: 5px; text-align: center;'>Banda {band_int} - Valor: {metric_text}{extra_html}</div>",
+        unsafe_allow_html=True,
+    )
 
 # Mostrar información de bandas si está disponible
 if 'banda_brix' in agg_variedad.columns:
     col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("**🍇 Banda BRIX**")
-        for _, row in agg_variedad.iterrows():
-            banda = row.get('banda_brix', 0)
-            valor = row.get('promedio_brix', np.nan)
-            if banda > 0:
-                color = band_colors.get(int(banda), '#cccccc')
-                st.markdown(f'<div style="background-color: {color}; padding: 10px; border-radius: 5px; text-align: center;">Banda {int(banda)} - Valor: {valor:.2f}</div>', unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("**💪 Banda Firmeza**")
-        for _, row in agg_variedad.iterrows():
-            banda = row.get('banda_firmeza', 0)
-            valor = row.get('promedio_firmeza_punto', np.nan)
-            metodo = row.get('firmeza_metodo_usado', 'N/A')
-            if banda > 0:
-                color = band_colors.get(int(banda), '#cccccc')
-                st.markdown(f'<div style="background-color: {color}; padding: 10px; border-radius: 5px; text-align: center;">Banda {int(banda)} - Valor: {valor:.2f}<br>Método: {metodo}</div>', unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("**🧪 Banda Acidez**")
-        for _, row in agg_variedad.iterrows():
-            banda = row.get('banda_acidez', 0)
-            valor = row.get('promedio_acidez', np.nan)
-            if banda > 0:
-                color = band_colors.get(int(banda), '#cccccc')
-                st.markdown(f'<div style="background-color: {color}; padding: 10px; border-radius: 5px; text-align: center;">Banda {int(banda)} - Valor: {valor:.2f}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div style="background-color: #e0e0e0; padding: 10px; border-radius: 5px; text-align: center;">Sin datos</div>', unsafe_allow_html=True)
 
-# Paso 5: Cálculo del cluster final
+    with col1:
+        st.markdown("**Banda BRIX**")
+        for _, row in agg_variedad.iterrows():
+            _render_band_card(row.get('banda_brix'), row.get('promedio_brix'))
+
+    with col2:
+        st.markdown("**Banda Firmeza**")
+        for _, row in agg_variedad.iterrows():
+            band_value = row.get('banda_firmeza')
+            if band_value is None:
+                band_value = row.get('banda_firmeza_punto')
+            metodo = row.get('firmeza_metodo_usado', 'N/A')
+            if pd.isna(metodo):
+                metodo = 'N/A'
+            _render_band_card(
+                band_value,
+                row.get('promedio_firmeza_punto'),
+                extra_text=f"Metodo: {metodo}",
+            )
+
+    with col3:
+        st.markdown("**Banda Acidez**")
+        for _, row in agg_variedad.iterrows():
+            _render_band_card(row.get('banda_acidez'), row.get('promedio_acidez'))
+
+# Paso 5: Calculo del cluster final
 st.markdown("---")
-st.markdown("### 🏆 Paso 5: Cálculo del cluster final")
-st.markdown('<div class="calculation-box">Se suman las bandas y se asigna el cluster según rangos específicos.</div>', unsafe_allow_html=True)
+st.markdown("### Paso 5: Calculo del cluster final")
+st.markdown('<div class="calculation-box">Se suman las bandas y se asigna el cluster segun rangos especificos.</div>', unsafe_allow_html=True)
 
 if 'suma_bandas' in agg_variedad.columns:
     for _, row in agg_variedad.iterrows():
         temporada = row.get('harvest_period', 'N/A')
-        suma = row.get('suma_bandas', 0)
-        cluster = row.get('cluster_grp', 0)
-        
-        # Calcular componentes de la suma
-        banda_brix = row.get('banda_brix', 0)
-        banda_firmeza = row.get('banda_firmeza', 0)
-        banda_acidez = row.get('banda_acidez', 0)
-        
         st.markdown(f"#### Temporada: {temporada}")
-        
-        # Mostrar cálculo
+
+        banda_brix = _safe_positive_int(row.get('banda_brix'))
+        banda_firmeza = _safe_positive_int(row.get('banda_firmeza', row.get('banda_firmeza_punto')))
+        banda_acidez = _safe_positive_int(row.get('banda_acidez'))
+        suma_bandas = _safe_positive_int(row.get('suma_bandas'))
+        cluster_val = _safe_positive_int(row.get('cluster_grp'))
+
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.markdown(f"**BRIX**: Banda {int(banda_brix)}")
+            st.markdown(f"**BRIX**: Banda {banda_brix}" if banda_brix is not None else "**BRIX**: Sin datos")
         with col2:
-            st.markdown(f"**Firmeza**: Banda {int(banda_firmeza)}")
+            st.markdown(f"**Firmeza**: Banda {banda_firmeza}" if banda_firmeza is not None else "**Firmeza**: Sin datos")
         with col3:
-            st.markdown(f"**Acidez**: Banda {int(banda_acidez)}")
+            st.markdown(f"**Acidez**: Banda {banda_acidez}" if banda_acidez is not None else "**Acidez**: Sin datos")
         with col4:
-            st.markdown(f"**SUMA TOTAL**: {int(suma)}")
-        
-        # Mostrar cluster asignado
-        cluster_color = band_colors.get(int(cluster), '#cccccc')
-        cluster_name = {1: "Excelente", 2: "Bueno", 3: "Regular", 4: "Deficiente"}.get(int(cluster), "N/A")
-        
-        st.markdown(f'<div style="background-color: {cluster_color}; padding: 15px; border-radius: 10px; text-align: center; font-size: 18px; font-weight: bold; margin-top: 10px;">CLUSTER ASIGNADO: {int(cluster)} - {cluster_name}</div>', unsafe_allow_html=True)
-        
-        # Explicación del rango
-        st.markdown("**Rangos de clustering (para 3 métricas):**")
-        st.markdown("- Suma 3-5 → Cluster 1 (Excelente)")
-        st.markdown("- Suma 6-8 → Cluster 2 (Bueno)")
-        st.markdown("- Suma 9-11 → Cluster 3 (Regular)")
-        st.markdown("- Suma 12+ → Cluster 4 (Deficiente)")
+            st.markdown(f"**SUMA TOTAL**: {suma_bandas}" if suma_bandas is not None else "**SUMA TOTAL**: Sin datos")
+
+        colors = get_cluster_colors()
+        cluster_color = colors['solid'].get(cluster_val, '#F8F9FA') if cluster_val else '#E9ECEF'
+        cluster_name = {1: "Excelente", 2: "Bueno", 3: "Regular", 4: "Deficiente"}.get(cluster_val, "") if cluster_val else ""
+        cluster_text = f"{cluster_val} - {cluster_name}" if cluster_val else "Sin datos"
+
+        st.markdown(
+            f"<div style='background-color: {cluster_color}; padding: 15px; border-radius: 10px; text-align: center; font-size: 18px; font-weight: bold; margin-top: 10px;'>CLUSTER ASIGNADO: {cluster_text}</div>",
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("**Rangos de clustering (para 3 metricas):**")
+        st.markdown("- Suma 3-5 -> Cluster 1 (Excelente)")
+        st.markdown("- Suma 6-8 -> Cluster 2 (Bueno)")
+        st.markdown("- Suma 9-11 -> Cluster 3 (Regular)")
+        st.markdown("- Suma 12+ -> Cluster 4 (Deficiente)")
 
 # Verificación de consistencia
 st.markdown("---")
